@@ -1,9 +1,15 @@
-import { EMPTY_SPEEDTEST, EMPTY_VISUALWARE } from './networkReadiness.js'
+import {
+  EMPTY_SPEEDTEST,
+  EMPTY_VISUALWARE,
+  emptySpeedtestRuns,
+  emptyVisualwareRuns,
+  normalizeNetworkSurvey,
+} from './networkReadiness.js'
 
 const DRAFT_KEY = 'voip-ops-survey-draft'
 
 export function createEmptySurvey() {
-  return {
+  return normalizeNetworkSurvey({
     id: crypto.randomUUID?.() || `${Date.now()}`,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -21,11 +27,13 @@ export function createEmptySurvey() {
     phoneCount: '',
     mainNumbers: [],
     users: [],
+    speedtests: emptySpeedtestRuns(),
+    visualwareRuns: emptyVisualwareRuns(),
     speedtest: { ...EMPTY_SPEEDTEST },
     visualware: { ...EMPTY_VISUALWARE },
     photos: [],
     topology: defaultTopology(),
-  }
+  })
 }
 
 export function defaultTopology() {
@@ -590,6 +598,10 @@ export function buildHtmlReport(survey, readiness, options = {}) {
       <div class="score"><span>Lowest MOS</span><strong>${esc(readiness.summary.mos ?? '-')}</strong></div>
       <div class="score"><span>Calls</span><strong>${esc(readiness.summary.supported != null ? `${readiness.summary.supported}/${readiness.summary.requested}` : '-')}</strong></div>
     </div>
+    <p style="margin:0 0 12px;color:#666;font-size:13px">
+      Speedtests ${esc(String(readiness.summary.speedFilled ?? 0))}/3 · MyConnection ${esc(String(readiness.summary.vwFilled ?? 0))}/3
+      (verdict uses worst-case across runs)
+    </p>
     <table>
       <thead><tr><th>Metric</th><th>Value</th><th>Status</th></tr></thead>
       <tbody>${metricRows}</tbody>

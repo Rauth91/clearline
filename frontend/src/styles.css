@@ -2523,7 +2523,63 @@ a.btn {
 }
 
 .readiness-inline {
-  padding: 14px 14px 0;
+  margin-bottom: 14px;
+}
+
+.test-run-block {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg1) 80%, transparent);
+}
+
+.test-run-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-bottom: 12px;
+}
+
+.test-run-head h4 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  min-width: 7rem;
+}
+
+.test-run-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.test-run-tab {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--bg0);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-family: var(--font);
+  cursor: pointer;
+}
+
+.test-run-tab.is-active {
+  color: var(--ink);
+  border-color: var(--accent, #5b8def);
+  background: color-mix(in srgb, var(--accent, #5b8def) 18%, transparent);
+}
+
+.test-run-tab.has-data:not(.is-active) {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--ok, #3d9a6a) 45%, var(--line));
+}
+
+.test-run-head .btn-row {
+  margin-left: auto;
 }
 
 .user-table-wide .user-row {

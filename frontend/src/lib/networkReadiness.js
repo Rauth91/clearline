@@ -49,6 +49,128 @@ export const EMPTY_SPEEDTEST = {
   notes: '',
 }
 
+/** Field techs typically run three of each. */
+export const NETWORK_RUN_COUNT = 3
+
+export function emptySpeedtestRuns() {
+  return Array.from({ length: NETWORK_RUN_COUNT }, () => ({ ...EMPTY_SPEEDTEST }))
+}
+
+export function emptyVisualwareRuns() {
+  return Array.from({ length: NETWORK_RUN_COUNT }, () => ({ ...EMPTY_VISUALWARE }))
+}
+
+function padRuns(runs, emptyFactory) {
+  const next = Array.isArray(runs) ? runs.map(r => ({ ...emptyFactory(), ...r })) : []
+  while (next.length < NETWORK_RUN_COUNT) next.push(emptyFactory())
+  return next.slice(0, NETWORK_RUN_COUNT)
+}
+
+function speedtestHasData(st) {
+  return Boolean(
+    String(st?.downloadMbps ?? '').trim()
+    || String(st?.uploadMbps ?? '').trim()
+    || String(st?.latencyMs ?? '').trim(),
+  )
+}
+
+function visualwareHasData(vw) {
+  return Boolean(
+    String(vw?.rawPaste ?? '').trim()
+    || String(vw?.jitterOut ?? '').trim()
+    || String(vw?.mosOut ?? '').trim()
+    || String(vw?.overall ?? '').trim(),
+  )
+}
+
+export function aggregateSpeedtests(runs) {
+  const filled = (runs || []).filter(speedtestHasData)
+  if (!filled.length) return { ...EMPTY_SPEEDTEST }
+  return {
+    downloadMbps: minNumericField(filled, 'downloadMbps'),
+    uploadMbps: minNumericField(filled, 'uploadMbps'),
+    latencyMs: maxNumericField(filled, 'latencyMs'),
+    server: filled.map(r => r.server).filter(Boolean).join(' · '),
+    testedAt: filled.map(r => r.testedAt).filter(Boolean).join(' · '),
+    notes: filled.map((r, i) => (r.notes ? `Run ${i + 1}: ${r.notes}` : '')).filter(Boolean).join(' | '),
+  }
+}
+
+export function aggregateVisualwareRuns(runs) {
+  const filled = (runs || []).filter(visualwareHasData)
+  if (!filled.length) return { ...EMPTY_VISUALWARE }
+  const overalls = filled.map(r => r.overall).filter(Boolean)
+  const fail = overalls.find(o => /fail/i.test(o))
+  const warn = overalls.find(o => /warn|marginal/i.test(o))
+  return {
+    rawPaste: filled.map(r => r.rawPaste).filter(Boolean).join('\n\n---\n\n'),
+    overall: fail || warn || overalls[0] || '',
+    session: filled.map(r => r.session).filter(Boolean).join(' · '),
+    location: filled.find(r => r.location)?.location || '',
+    callsSimulated: maxNumericField(filled, 'callsSimulated'),
+    callsSupported: minNumericField(filled, 'callsSupported'),
+    jitterOut: maxNumericField(filled, 'jitterOut'),
+    jitterIn: maxNumericField(filled, 'jitterIn'),
+    lossOut: maxNumericField(filled, 'lossOut'),
+    lossIn: maxNumericField(filled, 'lossIn'),
+    mosOut: minNumericField(filled, 'mosOut'),
+    mosIn: minNumericField(filled, 'mosIn'),
+    rttMs: maxNumericField(filled, 'rttMs'),
+    sipAlg: filled.some(r => r.sipAlg === 'detected') ? 'detected' : (filled.find(r => r.sipAlg)?.sipAlg || ''),
+    downMbps: minNumericField(filled, 'downMbps'),
+    upMbps: minNumericField(filled, 'upMbps'),
+  }
+}
+
+function minNumericField(rows, key) {
+  const nums = rows.map(r => toNumber(r[key])).filter(v => v != null)
+  return nums.length ? String(Math.min(...nums)) : ''
+}
+
+function maxNumericField(rows, key) {
+  const nums = rows.map(r => toNumber(r[key])).filter(v => v != null)
+  return nums.length ? String(Math.max(...nums)) : ''
+}
+
+/**
+ * Ensure survey has 3 Speedtest + 3 MyConnection slots.
+ * Migrates legacy single speedtest / visualware objects.
+ */
+export function normalizeNetworkSurvey(survey = {}) {
+  let speedtests = Array.isArray(survey.speedtests)
+    ? padRuns(survey.speedtests, () => ({ ...EMPTY_SPEEDTEST }))
+    : emptySpeedtestRuns()
+  let visualwareRuns = Array.isArray(survey.visualwareRuns)
+    ? padRuns(survey.visualwareRuns, () => ({ ...EMPTY_VISUALWARE }))
+    : emptyVisualwareRuns()
+
+  if (!Array.isArray(survey.speedtests) && survey.speedtest && speedtestHasData(survey.speedtest)) {
+    speedtests = padRuns([{ ...EMPTY_SPEEDTEST, ...survey.speedtest }], () => ({ ...EMPTY_SPEEDTEST }))
+  }
+  if (!Array.isArray(survey.visualwareRuns) && survey.visualware && visualwareHasData(survey.visualware)) {
+    visualwareRuns = padRuns([{ ...EMPTY_VISUALWARE, ...survey.visualware }], () => ({ ...EMPTY_VISUALWARE }))
+  }
+
+  const speedtest = aggregateSpeedtests(speedtests)
+  const visualware = aggregateVisualwareRuns(visualwareRuns)
+  return {
+    ...survey,
+    speedtests,
+    visualwareRuns,
+    speedtest,
+    visualware,
+  }
+}
+
+export function networkRunProgress(survey) {
+  const n = normalizeNetworkSurvey(survey)
+  const speedFilled = n.speedtests.filter(speedtestHasData).length
+  const vwFilled = n.visualwareRuns.filter(visualwareHasData).length
+  const filled = speedFilled + vwFilled
+  const total = NETWORK_RUN_COUNT * 2
+  return { filled, total, speedFilled, vwFilled, ratio: filled / total }
+}
+
 export const QUALITY_THRESHOLDS = [
   { metric: 'Jitter', good: '< 30 ms', watch: '30-50 ms', bad: '> 50 ms' },
   { metric: 'Latency / RTT', good: '< 100 ms', watch: '100-150 ms', bad: '> 150 ms' },
@@ -170,7 +292,14 @@ function capacityRow(metric, value, requiredMbps, phones) {
   }
 }
 
-export function analyzeReadiness({ speedtest = EMPTY_SPEEDTEST, visualware = EMPTY_VISUALWARE, phoneCount = '' }) {
+export function analyzeReadiness(input = {}) {
+  const survey = normalizeNetworkSurvey(input)
+  const speedtests = survey.speedtests
+  const visualwareRuns = survey.visualwareRuns
+  const speedtest = survey.speedtest
+  const visualware = survey.visualware
+  const phoneCount = survey.phoneCount || ''
+
   const phones = Math.max(
     1,
     toNumber(phoneCount) || toNumber(visualware.callsSimulated) || 1,
@@ -190,68 +319,59 @@ export function analyzeReadiness({ speedtest = EMPTY_SPEEDTEST, visualware = EMP
   const speedUp = toNumber(speedtest.uploadMbps)
 
   const sections = [
-    {
-      section: 'Speedtest',
+    ...speedtests.map((run, index) => ({
+      section: `Speedtest ${index + 1}`,
       rows: [
         {
           metric: 'Download',
-          value: speedDown == null ? '-' : `${speedDown} Mbps`,
-          label: 'Speedtest download',
-          status: speedDown == null ? 'missing' : speedDown >= requiredMbps ? 'pass' : speedDown >= requiredMbps * 0.75 ? 'warn' : 'fail',
-          text: speedDown == null ? 'Optional if Visualware capacity is present' : `Need >= ${requiredMbps} Mbps`,
+          value: toNumber(run.downloadMbps) == null ? '-' : `${run.downloadMbps} Mbps`,
+          label: `Speedtest ${index + 1} download`,
+          status: toNumber(run.downloadMbps) == null ? 'missing' : toNumber(run.downloadMbps) >= requiredMbps ? 'pass' : toNumber(run.downloadMbps) >= requiredMbps * 0.75 ? 'warn' : 'fail',
+          text: toNumber(run.downloadMbps) == null ? 'Run not entered yet' : `Need >= ${requiredMbps} Mbps`,
         },
         {
           metric: 'Upload',
-          value: speedUp == null ? '-' : `${speedUp} Mbps`,
-          label: 'Speedtest upload',
-          status: speedUp == null ? 'missing' : speedUp >= requiredMbps ? 'pass' : speedUp >= requiredMbps * 0.75 ? 'warn' : 'fail',
-          text: speedUp == null ? 'Optional if Visualware capacity is present' : `Need >= ${requiredMbps} Mbps`,
+          value: toNumber(run.uploadMbps) == null ? '-' : `${run.uploadMbps} Mbps`,
+          label: `Speedtest ${index + 1} upload`,
+          status: toNumber(run.uploadMbps) == null ? 'missing' : toNumber(run.uploadMbps) >= requiredMbps ? 'pass' : toNumber(run.uploadMbps) >= requiredMbps * 0.75 ? 'warn' : 'fail',
+          text: toNumber(run.uploadMbps) == null ? 'Run not entered yet' : `Need >= ${requiredMbps} Mbps`,
         },
         {
           metric: 'Latency',
-          value: speedtest.latencyMs ? `${speedtest.latencyMs} ms` : '-',
-          ...gradeLower('Speedtest latency', toNumber(speedtest.latencyMs), 100, 150, ' ms'),
+          value: run.latencyMs ? `${run.latencyMs} ms` : '-',
+          ...gradeLower(`Speedtest ${index + 1} latency`, toNumber(run.latencyMs), 100, 150, ' ms'),
         },
       ],
-    },
-    {
-      section: 'Visualware Test Metrics',
+    })),
+    ...visualwareRuns.map((run, index) => ({
+      section: `MyConnection ${index + 1}`,
       rows: [
-        { metric: 'Jitter (Outgoing)', value: visualware.jitterOut ? `${visualware.jitterOut} ms` : '-', ...gradeLower('Jitter out', toNumber(visualware.jitterOut), 30, 50, ' ms') },
-        { metric: 'Jitter (Incoming)', value: visualware.jitterIn ? `${visualware.jitterIn} ms` : '-', ...gradeLower('Jitter in', toNumber(visualware.jitterIn), 30, 50, ' ms') },
-        { metric: 'Packet Loss (Outgoing)', value: visualware.lossOut !== '' ? `${visualware.lossOut}%` : '-', ...gradeLower('Loss out', toNumber(visualware.lossOut), 1, 3, '%') },
-        { metric: 'Packet Loss (Incoming)', value: visualware.lossIn !== '' ? `${visualware.lossIn}%` : '-', ...gradeLower('Loss in', toNumber(visualware.lossIn), 1, 3, '%') },
-        { metric: 'MOS (Outgoing)', value: visualware.mosOut || '-', ...gradeHigher('MOS out', toNumber(visualware.mosOut), 3.6, 3.2, '') },
-        { metric: 'MOS (Incoming)', value: visualware.mosIn || '-', ...gradeHigher('MOS in', toNumber(visualware.mosIn), 3.6, 3.2, '') },
+        { metric: 'Overall', value: run.overall || '-', label: `MyConnection ${index + 1} overall`, status: !run.overall ? 'missing' : /fail/i.test(run.overall) ? 'fail' : /warn|marginal/i.test(run.overall) ? 'warn' : 'pass', text: run.overall ? `Reported ${run.overall}` : 'Paste report for this run' },
+        { metric: 'Jitter (Outgoing)', value: run.jitterOut ? `${run.jitterOut} ms` : '-', ...gradeLower(`MC${index + 1} jitter out`, toNumber(run.jitterOut), 30, 50, ' ms') },
+        { metric: 'Jitter (Incoming)', value: run.jitterIn ? `${run.jitterIn} ms` : '-', ...gradeLower(`MC${index + 1} jitter in`, toNumber(run.jitterIn), 30, 50, ' ms') },
+        { metric: 'Packet Loss (Outgoing)', value: run.lossOut !== '' && run.lossOut != null ? `${run.lossOut}%` : '-', ...gradeLower(`MC${index + 1} loss out`, toNumber(run.lossOut), 1, 3, '%') },
+        { metric: 'Packet Loss (Incoming)', value: run.lossIn !== '' && run.lossIn != null ? `${run.lossIn}%` : '-', ...gradeLower(`MC${index + 1} loss in`, toNumber(run.lossIn), 1, 3, '%') },
+        { metric: 'MOS (Outgoing)', value: run.mosOut || '-', ...gradeHigher(`MC${index + 1} MOS out`, toNumber(run.mosOut), 3.6, 3.2, '') },
+        { metric: 'MOS (Incoming)', value: run.mosIn || '-', ...gradeHigher(`MC${index + 1} MOS in`, toNumber(run.mosIn), 3.6, 3.2, '') },
         {
           metric: 'SIP ALG',
-          value: !visualware.sipAlg ? '-' : visualware.sipAlg === 'clear' ? 'Clear' : 'Detected',
-          label: 'SIP ALG',
-          status: !visualware.sipAlg ? 'missing' : visualware.sipAlg === 'clear' ? 'pass' : 'fail',
-          text: !visualware.sipAlg ? 'Not reported' : visualware.sipAlg === 'clear' ? 'No interference' : 'Disable SIP ALG on the router',
+          value: !run.sipAlg ? '-' : run.sipAlg === 'clear' ? 'Clear' : 'Detected',
+          label: `MC${index + 1} SIP ALG`,
+          status: !run.sipAlg ? 'missing' : run.sipAlg === 'clear' ? 'pass' : 'fail',
+          text: !run.sipAlg ? 'Not reported' : run.sipAlg === 'clear' ? 'No interference' : 'Disable SIP ALG on the router',
         },
-        { metric: 'Round Trip Time', value: visualware.rttMs ? `${visualware.rttMs} ms` : '-', ...gradeLower('RTT', rtt, 100, 150, ' ms') },
+        { metric: 'Round Trip Time', value: run.rttMs ? `${run.rttMs} ms` : '-', ...gradeLower(`MC${index + 1} RTT`, toNumber(run.rttMs), 100, 150, ' ms') },
+        capacityRow('Downstream Capacity', run.downMbps, requiredMbps, phones),
+        capacityRow('Upstream Capacity', run.upMbps, requiredMbps, phones),
       ],
-    },
-    {
-      section: 'Visualware Connection Capacity',
-      rows: [
-        capacityRow('Downstream Capacity', visualware.downMbps, requiredMbps, phones),
-        capacityRow('Upstream Capacity', visualware.upMbps, requiredMbps, phones),
-        {
-          metric: 'Calls Supported',
-          value: supported != null ? `${supported} of ${requested} requested` : '-',
-          label: 'Calls supported',
-          status: supported == null ? 'missing' : supported >= requested ? 'pass' : supported >= requested * 0.75 ? 'warn' : 'fail',
-          text: supported == null ? 'Not reported' : supported >= requested ? `Supports ${supported} concurrent calls` : `Only ${supported} supported vs ${requested} requested`,
-        },
-      ],
-    },
+    })),
   ]
 
   const allRows = sections.flatMap(s => s.rows)
   const failures = allRows.filter(r => r.status === 'fail')
   const warnings = allRows.filter(r => r.status === 'warn')
+  const vwFilled = visualwareRuns.filter(visualwareHasData).length
+  const speedFilled = speedtests.filter(speedtestHasData).length
   const visualwareCoreMissing = [
     'jitterOut', 'jitterIn', 'lossOut', 'lossIn', 'mosOut', 'mosIn',
     'rttMs', 'sipAlg', 'downMbps', 'upMbps',
@@ -260,32 +380,40 @@ export function analyzeReadiness({ speedtest = EMPTY_SPEEDTEST, visualware = EMP
   let status = 'ready'
   let title = 'Ready for phone install'
   let detail = visualware.overall
-    ? `Visualware overall: ${visualware.overall}. Metrics are within VoIP thresholds.`
+    ? `Worst-case across ${vwFilled || 0} MyConnection run(s): ${visualware.overall}.`
     : 'Reported metrics are within recommended VoIP ranges.'
 
   if (failures.length) {
     status = 'fail'
     title = 'Not ready for install'
-    detail = 'One or more metrics failed. Fix these before installing phones.'
-  } else if (warnings.length || visualwareCoreMissing > 4) {
+    detail = 'One or more metrics failed across the test runs. Fix these before installing phones.'
+  } else if (warnings.length || visualwareCoreMissing > 4 || vwFilled < NETWORK_RUN_COUNT || speedFilled < NETWORK_RUN_COUNT) {
     status = 'warn'
-    title = visualwareCoreMissing > 4 ? 'Needs Visualware report' : 'Install with caution'
-    detail = visualwareCoreMissing > 4
-      ? 'Paste the full Visualware report so every VoIP metric can be graded.'
-      : 'Network may work, but caution items can affect call quality.'
+    if (vwFilled < NETWORK_RUN_COUNT || speedFilled < NETWORK_RUN_COUNT) {
+      title = 'Complete all test runs'
+      detail = `Enter ${NETWORK_RUN_COUNT} Speedtests (${speedFilled}/${NETWORK_RUN_COUNT}) and ${NETWORK_RUN_COUNT} MyConnection tests (${vwFilled}/${NETWORK_RUN_COUNT}).`
+    } else if (visualwareCoreMissing > 4) {
+      title = 'Needs MyConnection report'
+      detail = 'Paste the full MyConnection / Visualware report for each run so every VoIP metric can be graded.'
+    } else {
+      title = 'Install with caution'
+      detail = 'Network may work, but caution items can affect call quality.'
+    }
   }
 
   const recommendations = []
+  if (speedFilled < NETWORK_RUN_COUNT) recommendations.push(`Run and record ${NETWORK_RUN_COUNT - speedFilled} more Speedtest(s).`)
+  if (vwFilled < NETWORK_RUN_COUNT) recommendations.push(`Run and paste ${NETWORK_RUN_COUNT - vwFilled} more MyConnection / Visualware test(s).`)
   if (jitter != null && jitter > 30) recommendations.push('High jitter: test wired Ethernet and check ISP/router congestion.')
   if (loss != null && loss > 1) recommendations.push('Packet loss must be fixed before install.')
   if (rtt != null && rtt > 150) recommendations.push('High RTT: test to closest region and avoid VPN during assessment.')
   if (mos != null && mos < 3.6) recommendations.push('MOS is below target; improve before install.')
   if (visualware.sipAlg === 'detected') recommendations.push('Disable SIP ALG on the customer router/firewall.')
-  if (up != null && up < requiredMbps) recommendations.push(`Visualware upstream capacity is below ${requiredMbps} Mbps baseline.`)
+  if (up != null && up < requiredMbps) recommendations.push(`MyConnection upstream capacity is below ${requiredMbps} Mbps baseline.`)
   if (speedUp != null && speedUp < requiredMbps) recommendations.push(`Speedtest upload is below ${requiredMbps} Mbps baseline.`)
-  if (supported != null && supported < requested) recommendations.push(`Visualware supports ${supported} calls vs ${requested} requested.`)
+  if (supported != null && supported < requested) recommendations.push(`MyConnection supports ${supported} calls vs ${requested} requested.`)
   if (!recommendations.length && status === 'ready') recommendations.push('Approve install and save this report as the customer pre-install baseline.')
-  if (!recommendations.length) recommendations.push('Re-run Visualware on wired Ethernet during business hours and paste the new report.')
+  if (!recommendations.length) recommendations.push('Re-run MyConnection on wired Ethernet during business hours and paste the new report.')
 
   return {
     status,
@@ -295,6 +423,9 @@ export function analyzeReadiness({ speedtest = EMPTY_SPEEDTEST, visualware = EMP
     recommendations,
     requiredMbps,
     phones,
-    summary: { jitter, loss, mos, rtt, down, up, speedDown, speedUp, supported, requested },
+    summary: {
+      jitter, loss, mos, rtt, down, up, speedDown, speedUp, supported, requested,
+      speedFilled, vwFilled,
+    },
   }
 }

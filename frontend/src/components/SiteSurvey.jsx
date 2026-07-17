@@ -3,9 +3,12 @@ import { createPortal } from 'react-dom'
 import SurveyPhotos from './SurveyPhotos.jsx'
 import TopologyEditor from './TopologyEditor.jsx'
 import {
+  NETWORK_RUN_COUNT,
   QUALITY_THRESHOLDS,
   VISUALWARE_SAMPLE_REPORT,
   analyzeReadiness,
+  networkRunProgress,
+  normalizeNetworkSurvey,
   parseVisualwareReport,
 } from '../lib/networkReadiness.js'
 import {
@@ -25,7 +28,7 @@ const TOOLS = [
     url: 'https://www.speedtest.net/',
   },
   {
-    title: 'Visualware VoIP Assessment',
+    title: 'MyConnection (Visualware)',
     label: 'Jitter, loss, MOS, SIP ALG',
     url: 'https://myconnectionserver.visualware.com/portals/voip-test/voip-assessment-test',
     secondaryUrl: 'https://www.visualware.com/bcs/',
@@ -36,7 +39,7 @@ const PANELS = [
   ['site', 'Site', 'Customer, site, contacts, and access notes'],
   ['numbers', 'Numbers', 'Company main lines, fax, and toll-free'],
   ['users', 'Users', 'Names, extensions, DIDs, and locations'],
-  ['network', 'Network', 'Speedtest, Visualware, and readiness metrics'],
+  ['network', 'Network', '3 Speedtests + 3 MyConnection tests'],
   ['topology', 'Topology', 'Rack, switch, and phone layout'],
   ['photos', 'Photos', 'MDF, IDF, cabling, and site evidence'],
 ]
@@ -49,6 +52,8 @@ export default function SiteSurvey({ jobId }) {
   const [parseNote, setParseNote] = useState(null)
   const [exportingPdf, setExportingPdf] = useState(false)
   const [activePanel, setActivePanel] = useState(null)
+  const [speedRun, setSpeedRun] = useState(0)
+  const [mcRun, setMcRun] = useState(0)
   const importRef = useRef(null)
   const readiness = useMemo(() => analyzeReadiness(survey), [survey])
 
@@ -57,9 +62,11 @@ export default function SiteSurvey({ jobId }) {
     setReady(false)
     setParseNote(null)
     setActivePanel(null)
+    setSpeedRun(0)
+    setMcRun(0)
     loadJobSurveyAsync(jobId).then((data) => {
       if (cancelled) return
-      setSurvey(data)
+      setSurvey(normalizeNetworkSurvey(data))
       setReady(true)
     })
     return () => { cancelled = true }
@@ -110,30 +117,41 @@ export default function SiteSurvey({ jobId }) {
     updateSurvey({ customer: { ...survey.customer, [field]: value } })
   }
 
-  function updateSpeedtest(field, value) {
-    updateSurvey({ speedtest: { ...survey.speedtest, [field]: value } })
+  function updateSpeedtest(index, field, value) {
+    const speedtests = [...(survey.speedtests || [])]
+    while (speedtests.length < NETWORK_RUN_COUNT) speedtests.push({})
+    speedtests[index] = { ...speedtests[index], [field]: value }
+    updateSurvey(normalizeNetworkSurvey({ ...survey, speedtests }))
   }
 
-  function updateVisualware(field, value) {
-    updateSurvey({ visualware: { ...survey.visualware, [field]: value } })
+  function updateVisualware(index, field, value) {
+    const visualwareRuns = [...(survey.visualwareRuns || [])]
+    while (visualwareRuns.length < NETWORK_RUN_COUNT) visualwareRuns.push({})
+    visualwareRuns[index] = { ...visualwareRuns[index], [field]: value }
+    updateSurvey(normalizeNetworkSurvey({ ...survey, visualwareRuns }))
   }
 
-  function parseReport(text = survey.visualware.rawPaste) {
-    const { data, matched } = parseVisualwareReport(text)
+  function parseReport(index = mcRun, text) {
+    const run = survey.visualwareRuns?.[index] || {}
+    const paste = text ?? run.rawPaste
+    const { data, matched } = parseVisualwareReport(paste)
     if (!matched) {
-      setParseNote({ type: 'error', text: 'Could not find Visualware metrics in the pasted report.' })
+      setParseNote({ type: 'error', text: `Could not find MyConnection metrics in run ${index + 1}.` })
       return
     }
-    updateSurvey({
-      visualware: { ...survey.visualware, ...data, rawPaste: text },
+    const visualwareRuns = [...(survey.visualwareRuns || [])]
+    while (visualwareRuns.length < NETWORK_RUN_COUNT) visualwareRuns.push({})
+    visualwareRuns[index] = { ...visualwareRuns[index], ...data, rawPaste: paste }
+    updateSurvey(normalizeNetworkSurvey({
+      ...survey,
+      visualwareRuns,
       phoneCount: data.callsSimulated || survey.phoneCount,
-    })
-    setParseNote({ type: 'ok', text: `Parsed ${matched} field(s) from Visualware.` })
+    }))
+    setParseNote({ type: 'ok', text: `Parsed ${matched} field(s) into MyConnection run ${index + 1}.` })
   }
 
   function loadVisualwareSample() {
-    updateSurvey({ visualware: { ...survey.visualware, rawPaste: VISUALWARE_SAMPLE_REPORT } })
-    parseReport(VISUALWARE_SAMPLE_REPORT)
+    parseReport(mcRun, VISUALWARE_SAMPLE_REPORT)
   }
 
   function startNew() {
@@ -354,6 +372,10 @@ export default function SiteSurvey({ jobId }) {
                 updateVisualware={updateVisualware}
                 parseReport={parseReport}
                 loadVisualwareSample={loadVisualwareSample}
+                speedRun={speedRun}
+                setSpeedRun={setSpeedRun}
+                mcRun={mcRun}
+                setMcRun={setMcRun}
                 mainNumbers={mainNumbers}
                 addMainNumber={addMainNumber}
                 addMainNumberPreset={addMainNumberPreset}
@@ -384,6 +406,10 @@ function SurveyPanelBody({
   updateVisualware,
   parseReport,
   loadVisualwareSample,
+  speedRun,
+  setSpeedRun,
+  mcRun,
+  setMcRun,
   mainNumbers,
   addMainNumber,
   addMainNumberPreset,
@@ -494,16 +520,21 @@ function SurveyPanelBody({
   }
 
   if (id === 'network') {
+    const speedtests = survey.speedtests || []
+    const visualwareRuns = survey.visualwareRuns || []
+    const st = speedtests[speedRun] || {}
+    const vw = visualwareRuns[mcRun] || {}
+    const netProg = networkRunProgress(survey)
+
     return (
       <>
         <div className="design-list-head">
           <div>
             <h3>Network readiness</h3>
-            <p>Run Speedtest and Visualware, then paste results here.</p>
-          </div>
-          <div className="btn-row">
-            <button type="button" className="btn btn-secondary" onClick={loadVisualwareSample}>Load sample</button>
-            <button type="button" className="btn btn-primary" onClick={() => parseReport()} disabled={!survey.visualware.rawPaste?.trim()}>Parse Visualware</button>
+            <p>
+              Run {NETWORK_RUN_COUNT} Speedtests and {NETWORK_RUN_COUNT} MyConnection tests.
+              Verdict uses the worst-case across all runs ({netProg.speedFilled}/{NETWORK_RUN_COUNT} Speed · {netProg.vwFilled}/{NETWORK_RUN_COUNT} MyConnection).
+            </p>
           </div>
         </div>
         <div className="tool-strip">
@@ -524,22 +555,74 @@ function SurveyPanelBody({
           <Score label="Lowest MOS" value={readiness.summary.mos ?? '-'} />
           <Score label="Calls" value={readiness.summary.supported != null ? `${readiness.summary.supported}/${readiness.summary.requested}` : '-'} />
         </div>
-        <div className="survey-form-grid">
-          <Field label="Download Mbps" type="number" value={survey.speedtest.downloadMbps} onChange={v => updateSpeedtest('downloadMbps', v)} />
-          <Field label="Upload Mbps" type="number" value={survey.speedtest.uploadMbps} onChange={v => updateSpeedtest('uploadMbps', v)} />
-          <Field label="Latency ms" type="number" value={survey.speedtest.latencyMs} onChange={v => updateSpeedtest('latencyMs', v)} />
-          <Field label="Server" value={survey.speedtest.server} onChange={v => updateSpeedtest('server', v)} />
-          <Field label="Tested at" type="datetime-local" value={survey.speedtest.testedAt} onChange={v => updateSpeedtest('testedAt', v)} />
-          <Field label="Notes" value={survey.speedtest.notes} onChange={v => updateSpeedtest('notes', v)} />
+
+        <div className="test-run-block">
+          <div className="test-run-head">
+            <h4>Speedtest</h4>
+            <div className="test-run-tabs" role="tablist" aria-label="Speedtest runs">
+              {Array.from({ length: NETWORK_RUN_COUNT }, (_, i) => (
+                <button
+                  key={`st-${i}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={speedRun === i}
+                  className={`test-run-tab${speedRun === i ? ' is-active' : ''}${speedtests[i]?.downloadMbps || speedtests[i]?.uploadMbps ? ' has-data' : ''}`}
+                  onClick={() => setSpeedRun(i)}
+                >
+                  Run {i + 1}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="survey-form-grid">
+            <Field label="Download Mbps" type="number" value={st.downloadMbps || ''} onChange={v => updateSpeedtest(speedRun, 'downloadMbps', v)} />
+            <Field label="Upload Mbps" type="number" value={st.uploadMbps || ''} onChange={v => updateSpeedtest(speedRun, 'uploadMbps', v)} />
+            <Field label="Latency ms" type="number" value={st.latencyMs || ''} onChange={v => updateSpeedtest(speedRun, 'latencyMs', v)} />
+            <Field label="Server" value={st.server || ''} onChange={v => updateSpeedtest(speedRun, 'server', v)} />
+            <Field label="Tested at" type="datetime-local" value={st.testedAt || ''} onChange={v => updateSpeedtest(speedRun, 'testedAt', v)} />
+            <Field label="Notes" value={st.notes || ''} onChange={v => updateSpeedtest(speedRun, 'notes', v)} />
+          </div>
         </div>
-        <textarea
-          className="report-textarea"
-          value={survey.visualware.rawPaste}
-          onChange={e => updateVisualware('rawPaste', e.target.value)}
-          placeholder="Paste the full Visualware result here..."
-          spellCheck={false}
-        />
-        {parseNote && <div className={parseNote.type === 'ok' ? 'parse-note parse-ok' : 'parse-note parse-error'}>{parseNote.text}</div>}
+
+        <div className="test-run-block">
+          <div className="test-run-head">
+            <h4>MyConnection</h4>
+            <div className="test-run-tabs" role="tablist" aria-label="MyConnection runs">
+              {Array.from({ length: NETWORK_RUN_COUNT }, (_, i) => (
+                <button
+                  key={`mc-${i}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={mcRun === i}
+                  className={`test-run-tab${mcRun === i ? ' is-active' : ''}${visualwareRuns[i]?.rawPaste || visualwareRuns[i]?.overall ? ' has-data' : ''}`}
+                  onClick={() => setMcRun(i)}
+                >
+                  Run {i + 1}
+                </button>
+              ))}
+            </div>
+            <div className="btn-row">
+              <button type="button" className="btn btn-secondary" onClick={loadVisualwareSample}>Load sample</button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => parseReport(mcRun)}
+                disabled={!String(vw.rawPaste || '').trim()}
+              >
+                Parse run {mcRun + 1}
+              </button>
+            </div>
+          </div>
+          <textarea
+            className="report-textarea"
+            value={vw.rawPaste || ''}
+            onChange={e => updateVisualware(mcRun, 'rawPaste', e.target.value)}
+            placeholder={`Paste MyConnection / Visualware result for run ${mcRun + 1}…`}
+            spellCheck={false}
+          />
+          {parseNote && <div className={parseNote.type === 'ok' ? 'parse-note parse-ok' : 'parse-note parse-error'}>{parseNote.text}</div>}
+        </div>
+
         <MetricSections sections={readiness.sections} />
         <div className="panel" style={{ marginTop: 16 }}>
           <div className="panel-head"><span className="panel-title">Quality guide</span></div>
@@ -594,15 +677,7 @@ function panelProgress(survey, id) {
     return { filled: n, total: Math.max(1, n), ratio: n > 0 ? 1 : 0 }
   }
   if (id === 'network') {
-    const st = survey.speedtest || {}
-    const vw = survey.visualware || {}
-    const fields = [
-      st.downloadMbps, st.uploadMbps, st.latencyMs, vw.rawPaste,
-      vw.jitterMs, vw.packetLossPercent, vw.mos,
-    ]
-    const filled = fields.filter(v => String(v ?? '').trim()).length
-    const total = fields.length
-    return { filled, total, ratio: filled / total }
+    return networkRunProgress(survey)
   }
   if (id === 'topology') {
     const nodes = survey.topology?.nodes?.length || 0

@@ -4,6 +4,7 @@
  */
 
 import { createEmptySurvey, makeId } from './surveyModel.js'
+import { normalizeNetworkSurvey } from './networkReadiness.js'
 import {
   clearAllJobPhotos,
   deleteJobPhotos,
@@ -604,7 +605,7 @@ export function syncJobMetaFromSurvey(jobId, survey) {
 export function loadJobSurvey(jobId) {
   if (!jobId) return createEmptySurvey()
   const data = readJson(jobKey(jobId, 'survey'), null)
-  return data || createEmptySurvey()
+  return normalizeNetworkSurvey(data || createEmptySurvey())
 }
 
 export async function loadJobSurveyAsync(jobId) {
@@ -640,7 +641,7 @@ export async function loadJobSurveyAsync(jobId) {
  */
 export async function saveJobSurvey(jobId, survey) {
   if (!jobId) return { ok: false }
-  const next = { ...survey, updatedAt: new Date().toISOString() }
+  const next = normalizeNetworkSurvey({ ...survey, updatedAt: new Date().toISOString() })
   const photos = next.photos || []
 
   try {
