@@ -148,11 +148,7 @@ export default function JobsHub({ onOpenJob, refreshKey }) {
 
       {jobs.length === 0 && (
         <div className="empty-hint-action jobs-empty">
-          <p>No jobs on this device. Create a new one, or import a job file you saved earlier.</p>
-          <div className="btn-row">
-            <button type="button" className="btn btn-primary" onClick={openNewJob}>New job</button>
-            <button type="button" className="btn btn-secondary" onClick={() => importRef.current?.click()}>Import job file</button>
-          </div>
+          <p>No jobs on this device yet. Use New job or Import job file above to get started.</p>
         </div>
       )}
 
