@@ -127,7 +127,7 @@ const PANELS = [
   ['devices', 'Devices', 'Phones, analog, conference, and network gear'],
   ['network', 'Network', 'VLAN, IP plan, QoS, PoE, firewall'],
   ['mainNumbers', 'Main numbers', 'Company lines used for AA and design'],
-  ['users', 'Users & DIDs', 'Extensions, DIDs, and voicemail per user'],
+  ['users', 'Users & DIDs', 'Extensions, emails, DIDs, and voicemail per user'],
   ['assumptions', 'Assumptions', 'Risks, dependencies, and follow-ups'],
 ]
 
@@ -273,6 +273,7 @@ export default function SystemDesign({ jobId }) {
         id: makeId(),
         name: '',
         username: '',
+        email: '',
         extension: '',
         did: '',
         location: '',
@@ -491,13 +492,21 @@ function PanelBody({
         <div className="design-list-head">
           <div>
             <h3>Users, extensions, and DIDs</h3>
-            <p>Who gets an extension, which DID, and whether they need voicemail.</p>
+            <p>Who gets an extension, email, which DID, and whether they need voicemail.</p>
           </div>
           <button type="button" className="btn btn-secondary" onClick={addUser}>Add user</button>
         </div>
         <div className="design-table design-user-table">
           <div className="design-table-row design-table-head">
-            <span>Name</span><span>Username</span><span>Ext</span><span>DID</span><span>Location</span><span>Role</span><span>VM</span><span />
+            <span>Name</span>
+            <span>Username</span>
+            <span>Email</span>
+            <span>Ext</span>
+            <span>DID</span>
+            <span>Location</span>
+            <span>Role</span>
+            <span>VM</span>
+            <span />
           </div>
           {(design.users || []).length === 0 && (
             <div className="empty-hint-action">
@@ -509,6 +518,7 @@ function PanelBody({
             <div className="design-table-row" key={user.id}>
               <input value={user.name} onChange={e => updateUser(user.id, 'name', e.target.value)} placeholder="Jane Tech" />
               <input value={user.username} onChange={e => updateUser(user.id, 'username', e.target.value)} placeholder="jane.tech" />
+              <input type="email" value={user.email || ''} onChange={e => updateUser(user.id, 'email', e.target.value)} placeholder="jane@company.com" />
               <input value={user.extension} onChange={e => updateUser(user.id, 'extension', e.target.value)} placeholder="1001" />
               <input value={user.did} onChange={e => updateUser(user.id, 'did', e.target.value)} placeholder="337-555-0101" />
               <input value={user.location} onChange={e => updateUser(user.id, 'location', e.target.value)} placeholder="Front desk" />

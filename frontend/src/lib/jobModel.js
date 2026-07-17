@@ -133,6 +133,7 @@ export function surveySyncFingerprint(survey) {
     users: (survey.users || []).map(u => ({
       name: u.name || '',
       username: u.username || '',
+      email: u.email || '',
       extension: u.extension || '',
       phone: u.phone || '',
       location: u.location || '',
@@ -167,6 +168,7 @@ export function applySurveyToDesign(design, survey) {
       id: u.id || makeId(),
       name: u.name || '',
       username: u.username || '',
+      email: u.email || '',
       extension: u.extension || '',
       did: u.phone || '',
       location: u.location || '',

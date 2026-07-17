@@ -148,8 +148,8 @@ export function buildDesignHtmlReport(design, completion = {}, options = {}) {
 
     <h2>Users, extensions, DIDs</h2>
     <table>
-      <tr><th>Name</th><th>Ext</th><th>DID</th><th>Role</th><th>VM</th></tr>
-      ${users.length ? users.map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.extension)}</td><td>${esc(u.did)}</td><td>${esc(u.role)}</td><td>${esc(u.voicemail)}</td></tr>`).join('') : '<tr><td colspan="5" class="muted">None</td></tr>'}
+      <tr><th>Name</th><th>Email</th><th>Ext</th><th>DID</th><th>Role</th><th>VM</th></tr>
+      ${users.length ? users.map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.email || '')}</td><td>${esc(u.extension)}</td><td>${esc(u.did)}</td><td>${esc(u.role)}</td><td>${esc(u.voicemail)}</td></tr>`).join('') : '<tr><td colspan="6" class="muted">None</td></tr>'}
     </table>
 
     <h2>Platform &amp; network</h2>

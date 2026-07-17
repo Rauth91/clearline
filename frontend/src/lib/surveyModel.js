@@ -248,7 +248,7 @@ export function buildHtmlReport(survey, readiness, options = {}) {
   const links = topology.links || []
   const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]))
   const mainNumberRows = (survey.mainNumbers || []).map(m => `<tr><td>${esc(m.label)}</td><td>${esc(m.number)}</td><td>${esc(m.notes || '')}</td></tr>`).join('')
-  const userRows = (survey.users || []).map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.username)}</td><td>${esc(u.extension)}</td><td>${esc(u.phone || '')}</td><td>${esc(u.location || '')}</td><td>${esc(u.role)}</td></tr>`).join('')
+  const userRows = (survey.users || []).map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.username)}</td><td>${esc(u.email || '')}</td><td>${esc(u.extension)}</td><td>${esc(u.phone || '')}</td><td>${esc(u.location || '')}</td><td>${esc(u.role)}</td></tr>`).join('')
   const connectionRows = links.map(l => {
     const from = nodeMap[l.from]
     const to = nodeMap[l.to]
@@ -579,8 +579,8 @@ export function buildHtmlReport(survey, readiness, options = {}) {
       <div class="page-meta">${(survey.users || []).length} users</div>
     </div>
     <table>
-      <thead><tr><th>Name</th><th>Username</th><th>Ext</th><th>DID</th><th>Location</th><th>Role</th></tr></thead>
-      <tbody>${userRows || '<tr><td colspan="6" class="empty">No users entered</td></tr>'}</tbody>
+      <thead><tr><th>Name</th><th>Username</th><th>Email</th><th>Ext</th><th>DID</th><th>Location</th><th>Role</th></tr></thead>
+      <tbody>${userRows || '<tr><td colspan="7" class="empty">No users entered</td></tr>'}</tbody>
     </table>
   </section>
 

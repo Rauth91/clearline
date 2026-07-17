@@ -131,7 +131,7 @@ export function buildGoLiveHtmlReport(golive, meta = {}, provision = {}, options
     .join('')
 
   const users = (provision.users || [])
-    .map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.extension)}</td><td>${esc(u.did)}</td><td>${esc(u.role)}</td><td>${esc(u.voicemail)}</td></tr>`)
+    .map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.email || '')}</td><td>${esc(u.extension)}</td><td>${esc(u.did)}</td><td>${esc(u.role)}</td><td>${esc(u.voicemail)}</td></tr>`)
     .join('')
   const mains = (provision.mainNumbers || [])
     .map(n => `<tr><td>${esc(n.label)}</td><td>${esc(n.number)}</td><td>${esc(n.notes)}</td></tr>`)
@@ -194,8 +194,8 @@ export function buildGoLiveHtmlReport(golive, meta = {}, provision = {}, options
     </table>
     <h3 style="font-size:13px;color:#6e6e73;margin-top:18px;">Users</h3>
     <table>
-      <tr><th>Name</th><th>Ext</th><th>DID</th><th>Role</th><th>VM</th></tr>
-      ${users || '<tr><td colspan="5" class="muted">None</td></tr>'}
+      <tr><th>Name</th><th>Email</th><th>Ext</th><th>DID</th><th>Role</th><th>VM</th></tr>
+      ${users || '<tr><td colspan="6" class="muted">None</td></tr>'}
     </table>
     <h3 style="font-size:13px;color:#6e6e73;margin-top:18px;">Auto attendant</h3>
     <table>${aa || '<tr><td class="muted">No menu options</td></tr>'}</table>

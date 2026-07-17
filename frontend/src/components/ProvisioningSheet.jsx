@@ -11,6 +11,7 @@ export function buildProvisionData(survey, design) {
   const users = designUsers.length
     ? designUsers.map(u => ({
       name: u.name || '',
+      email: u.email || '',
       extension: u.extension || '',
       did: u.did || '',
       role: u.role || 'User',
@@ -19,6 +20,7 @@ export function buildProvisionData(survey, design) {
     }))
     : surveyUsers.map(u => ({
       name: u.name || '',
+      email: u.email || '',
       extension: u.extension || '',
       did: u.phone || '',
       role: u.role || 'User',
@@ -86,12 +88,13 @@ export default function ProvisioningSheet({ survey, design }) {
         <h3>Users / extensions / DIDs</h3>
         <div className="design-table design-user-table">
           <div className="design-table-row design-table-head">
-            <span>Name</span><span>Ext</span><span>DID</span><span>Role</span><span>VM</span><span>Location</span>
+            <span>Name</span><span>Email</span><span>Ext</span><span>DID</span><span>Role</span><span>VM</span><span>Location</span>
           </div>
           {data.users.length === 0 && <p className="empty-hint">No users</p>}
           {data.users.map((u, i) => (
             <div className="design-table-row provision-row" key={`${u.extension}-${i}`}>
               <span>{u.name || '—'}</span>
+              <span>{u.email || '—'}</span>
               <span className="mono">{u.extension || '—'}</span>
               <span className="mono">{u.did || '—'}</span>
               <span>{u.role || '—'}</span>

@@ -38,7 +38,7 @@ const TOOLS = [
 const PANELS = [
   ['site', 'Site', 'Customer, site, contacts, and access notes'],
   ['numbers', 'Numbers', 'Company main lines, fax, and toll-free'],
-  ['users', 'Users', 'Names, extensions, DIDs, and locations'],
+  ['users', 'Users', 'Names, emails, extensions, DIDs, and locations'],
   ['network', 'Network', '3 Speedtests + 3 MyConnection tests'],
   ['topology', 'Topology', 'Rack, switch, and phone layout'],
   ['photos', 'Photos', 'MDF, IDF, cabling, and site evidence'],
@@ -486,7 +486,7 @@ function SurveyPanelBody({
         <div className="design-list-head">
           <div>
             <h3>Users and phones</h3>
-            <p>Who gets a phone, extension, and DID at this site.</p>
+            <p>Who gets a phone, email, extension, and DID at this site.</p>
           </div>
           <div className="btn-row">
             <button type="button" className="btn btn-secondary" onClick={() => addUsers(5)}>Add 5 users</button>
@@ -495,7 +495,14 @@ function SurveyPanelBody({
         </div>
         <div className="user-table user-table-wide">
           <div className="user-row user-head">
-            <span>Name</span><span>Username</span><span>Extension</span><span>Phone / DID</span><span>Location</span><span>Role</span><span />
+            <span>Name</span>
+            <span>Username</span>
+            <span>Email</span>
+            <span>Extension</span>
+            <span>Phone / DID</span>
+            <span>Location</span>
+            <span>Role</span>
+            <span />
           </div>
           {survey.users.length === 0 && (
             <div className="empty-hint-action">
@@ -507,6 +514,7 @@ function SurveyPanelBody({
             <div className="user-row" key={user.id}>
               <input value={user.name} onChange={e => updateUser(user.id, 'name', e.target.value)} placeholder="Jane Tech" />
               <input value={user.username} onChange={e => updateUser(user.id, 'username', e.target.value)} placeholder="jane.tech" />
+              <input type="email" value={user.email || ''} onChange={e => updateUser(user.id, 'email', e.target.value)} placeholder="jane@company.com" />
               <input value={user.extension || ''} onChange={e => updateUser(user.id, 'extension', e.target.value)} placeholder="1001" />
               <input value={user.phone || ''} onChange={e => updateUser(user.id, 'phone', e.target.value)} placeholder="337-555-0100" />
               <input value={user.location || ''} onChange={e => updateUser(user.id, 'location', e.target.value)} placeholder="Front desk" />
@@ -693,7 +701,7 @@ function panelProgress(survey, id) {
 }
 
 function newUser() {
-  return { id: makeId(), name: '', username: '', extension: '', phone: '', location: '', role: 'User' }
+  return { id: makeId(), name: '', username: '', email: '', extension: '', phone: '', location: '', role: 'User' }
 }
 
 function Field({ label, value, onChange, type = 'text' }) {

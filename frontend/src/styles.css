@@ -1806,6 +1806,10 @@ a.btn {
   margin: 2px 0;
 }
 
+.user-table {
+  overflow-x: auto;
+}
+
 .user-row {
   display: grid;
   grid-template-columns: 1fr 1fr 0.6fr 0.7fr auto;
@@ -1814,7 +1818,8 @@ a.btn {
 }
 
 .user-table-wide .user-row {
-  grid-template-columns: 1fr 1fr 0.55fr 0.9fr 0.65fr auto;
+  grid-template-columns: minmax(110px, 1.1fr) minmax(100px, 0.95fr) minmax(140px, 1.25fr) minmax(70px, 0.55fr) minmax(110px, 0.95fr) minmax(90px, 0.8fr) minmax(70px, 0.55fr) auto;
+  min-width: 860px;
 }
 
 .user-head {
@@ -2439,7 +2444,12 @@ a.btn {
 }
 
 .design-user-table .design-table-row {
-  grid-template-columns: 1.1fr 1fr 0.55fr 0.9fr 0.9fr 0.7fr 0.55fr auto;
+  grid-template-columns: minmax(100px, 1fr) minmax(90px, 0.9fr) minmax(130px, 1.15fr) minmax(55px, 0.5fr) minmax(100px, 0.85fr) minmax(90px, 0.8fr) minmax(70px, 0.55fr) minmax(50px, 0.45fr) auto;
+  min-width: 920px;
+}
+
+.design-table.design-user-table {
+  overflow-x: auto;
 }
 
 .design-table-head {
@@ -2580,10 +2590,6 @@ a.btn {
 
 .test-run-head .btn-row {
   margin-left: auto;
-}
-
-.user-table-wide .user-row {
-  grid-template-columns: 1fr 1fr 0.5fr 0.85fr 0.85fr 0.6fr auto;
 }
 
 .photo-card select {
@@ -3158,7 +3164,8 @@ a.btn {
 }
 
 .design-user-table .provision-row {
-  grid-template-columns: 1.1fr 0.55fr 0.9fr 0.7fr 0.55fr 0.9fr;
+  grid-template-columns: minmax(100px, 1.1fr) minmax(130px, 1.2fr) minmax(55px, 0.55fr) minmax(100px, 0.9fr) minmax(70px, 0.7fr) minmax(50px, 0.5fr) minmax(90px, 0.9fr);
+  min-width: 780px;
 }
 
 .provision-aa-row {
