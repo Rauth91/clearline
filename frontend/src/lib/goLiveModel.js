@@ -26,14 +26,13 @@ function esc(value) {
 
 const DEFAULT_INSTALL_ITEMS = [
   { id: 'vlan', label: 'Voice VLAN confirmed', done: false, notes: '' },
-  { id: 'qos', label: 'QoS / DSCP verified', done: false, notes: '' },
-  { id: 'poe', label: 'PoE budget checked', done: false, notes: '' },
   { id: 'phones', label: 'Phones staged / labeled', done: false, notes: '' },
   { id: 'program', label: 'PBX programming spot-checked', done: false, notes: '' },
-  { id: 'mdf', label: 'MDF / IDF photos captured', done: false, notes: '' },
   { id: 'e911', label: 'E911 address verified', done: false, notes: '' },
   { id: 'smoke', label: 'Inbound / outbound smoke tests passed', done: false, notes: '' },
 ]
+
+const REMOVED_INSTALL_IDS = new Set(['qos', 'poe', 'mdf'])
 
 export function createEmptyGoLive() {
   return {
@@ -66,9 +65,17 @@ export function createEmptyGoLive() {
 export function mergeGoLive(saved) {
   const empty = createEmptyGoLive()
   if (!saved || typeof saved !== 'object') return empty
-  const items = Array.isArray(saved.install?.items) && saved.install.items.length
-    ? saved.install.items
+  const rawItems = Array.isArray(saved.install?.items) && saved.install.items.length
+    ? saved.install.items.filter(i => !REMOVED_INSTALL_IDS.has(i.id))
     : empty.install.items
+  // Keep known defaults in order; drop removed legacy rows
+  const byId = Object.fromEntries(rawItems.map(i => [i.id, i]))
+  const items = DEFAULT_INSTALL_ITEMS.map(def => ({
+    ...def,
+    ...(byId[def.id] || {}),
+    id: def.id,
+    label: def.label,
+  }))
   return {
     ...empty,
     ...saved,
