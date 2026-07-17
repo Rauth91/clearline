@@ -1,0 +1,250 @@
+/**
+ * ClearLine — Field product shell
+ * Jobs hub + Site Survey | System Design | Go-Live
+ */
+
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
+import SiteSurvey from './components/SiteSurvey.jsx'
+import SystemDesign from './components/SystemDesign.jsx'
+import GoLive from './components/GoLive.jsx'
+import JobsHub from './components/JobsHub.jsx'
+import {
+  acknowledgeStorageVersionKeepData,
+  completeStorageVersionUpgrade,
+  exportAllJobs,
+  exportJobFileAsync,
+  getActiveJobId,
+  getJob,
+  getStorageVersionStatus,
+  ensureStorageVersion,
+  listJobs,
+  migrateLegacyDrafts,
+  setActiveJobId,
+  subscribeSaveStatus,
+} from './lib/jobModel.js'
+
+const WORKSPACES = [
+  { id: 'siteSurvey', label: 'Site Survey', description: 'Field handoff and readiness' },
+  { id: 'systemDesign', label: 'System Design', description: 'Plan voice architecture' },
+  { id: 'goLive', label: 'Go-Live', description: 'Cutover, install, handoff' },
+]
+
+function BrandMark() {
+  return (
+    <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="1.5" y="1.5" width="29" height="29" rx="7" fill="none" stroke="currentColor" strokeWidth="1.25" opacity="0.45" />
+      <path
+        className="brand-mark-pulse"
+        d="M6 16h4l2.5-6 4 12 2.5-6H26"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+export default function App() {
+  const [activeWorkspace, setActiveWorkspace] = useState('siteSurvey')
+  const [jobId, setJobId] = useState(() => {
+    ensureStorageVersion()
+    migrateLegacyDrafts()
+    return getActiveJobId()
+  })
+  const [hubTick, setHubTick] = useState(0)
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem('voip-ops-theme')
+    if (saved === 'light' || saved === 'dark') return saved
+    return 'dark'
+  })
+  const [saveBanner, setSaveBanner] = useState(null)
+  const [storageUpgrade, setStorageUpgrade] = useState(() => getStorageVersionStatus())
+
+  const job = jobId ? getJob(jobId) : null
+  const showHub = !jobId
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    document.documentElement.style.colorScheme = theme
+    localStorage.setItem('voip-ops-theme', theme)
+  }, [theme])
+
+  useEffect(() => {
+    return subscribeSaveStatus((detail) => {
+      if (!detail || detail.type === 'ok') return
+      setSaveBanner(detail)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!saveBanner || saveBanner.type !== 'warn') return undefined
+    const t = setTimeout(() => setSaveBanner(null), 8000)
+    return () => clearTimeout(t)
+  }, [saveBanner])
+
+  function handleOpenJob(id, workspace = 'siteSurvey') {
+    if (!id) {
+      setActiveJobId(null)
+      setJobId(null)
+      setHubTick(t => t + 1)
+      return
+    }
+    setActiveJobId(id)
+    setJobId(id)
+    setActiveWorkspace(workspace)
+  }
+
+  function goToJobs() {
+    setActiveJobId(null)
+    setJobId(null)
+    setHubTick(t => t + 1)
+  }
+
+  async function handleExportAllForUpgrade() {
+    const jobs = listJobs()
+    for (const j of jobs) {
+      try {
+        // Stagger downloads slightly so the browser keeps each file
+        await exportJobFileAsync(j.id)
+        await new Promise(r => setTimeout(r, 350))
+      } catch (err) {
+        console.error(err)
+      }
+    }
+    if (jobs.length === 0) exportAllJobs()
+  }
+
+  function handleUpgradeClear() {
+    if (!confirm('Clear all jobs from this browser and finish the storage update?\n\nExport job files first if you still need them.')) return
+    completeStorageVersionUpgrade()
+    setStorageUpgrade({ ok: true })
+    setJobId(null)
+    setHubTick(t => t + 1)
+  }
+
+  function handleUpgradeKeep() {
+    acknowledgeStorageVersionKeepData()
+    setStorageUpgrade({ ok: true })
+  }
+
+  return (
+    <div className="app-root">
+      <div className="app-atmosphere" aria-hidden="true" />
+      <header className="app-header">
+        <div className="brand">
+          <BrandMark />
+          <div className="brand-copy">
+            <div className="brand-name">ClearLine</div>
+            <div className="brand-tag">
+              {job?.customer ? job.customer : 'Survey. Design. Go live.'}
+              {job?.site ? ` · ${job.site}` : ''}
+            </div>
+          </div>
+        </div>
+        <div className="header-actions">
+          {jobId && (
+            <button type="button" className="btn btn-secondary jobs-switch" onClick={goToJobs}>
+              Jobs
+            </button>
+          )}
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={() => setTheme(current => (current === 'dark' ? 'light' : 'dark'))}
+            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            aria-pressed={theme === 'dark'}
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          >
+            <span className="theme-toggle-track" aria-hidden="true">
+              <span className="theme-toggle-thumb" />
+            </span>
+            <span>{theme === 'dark' ? 'Dark' : 'Light'}</span>
+          </button>
+        </div>
+      </header>
+
+      {saveBanner && (
+        <div
+          className={`app-save-banner${saveBanner.type === 'error' ? ' is-error' : ' is-warn'}`}
+          role="status"
+        >
+          <span>{saveBanner.message}</span>
+          <button type="button" className="btn btn-secondary" onClick={() => setSaveBanner(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {!showHub && (
+        <div className="app-nav-wrap">
+          <nav className="workspace-tabs workspace-tabs-3" aria-label="Primary workspaces">
+            {WORKSPACES.map(workspace => (
+              <button
+                key={workspace.id}
+                type="button"
+                onClick={() => setActiveWorkspace(workspace.id)}
+                className={`workspace-tab${activeWorkspace === workspace.id ? ' workspace-tab-active' : ''}`}
+              >
+                <span>{workspace.label}</span>
+                <small>{workspace.description}</small>
+              </button>
+            ))}
+          </nav>
+        </div>
+      )}
+
+      <main className="app-body" key={showHub ? `hub-${hubTick}` : `${jobId}-${activeWorkspace}`}>
+        <div className="app-stage">
+          {showHub && (
+            <JobsHub
+              refreshKey={hubTick}
+              onOpenJob={handleOpenJob}
+            />
+          )}
+          {!showHub && activeWorkspace === 'siteSurvey' && <SiteSurvey jobId={jobId} />}
+          {!showHub && activeWorkspace === 'systemDesign' && <SystemDesign jobId={jobId} />}
+          {!showHub && activeWorkspace === 'goLive' && <GoLive jobId={jobId} />}
+        </div>
+      </main>
+
+      {storageUpgrade?.needsUpgrade && createPortal(
+        <div className="section-modal-backdrop storage-upgrade-backdrop" role="presentation">
+          <div
+            className="section-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="storage-upgrade-title"
+          >
+            <div className="section-modal-head">
+              <div>
+                <div className="survey-kicker">Storage update</div>
+                <h2 id="storage-upgrade-title">Export before continuing</h2>
+                <p>
+                  ClearLine’s storage format changed. Export your job files first so nothing is lost.
+                  You can keep existing jobs on this device, or clear them after exporting.
+                </p>
+              </div>
+            </div>
+            <div className="section-modal-body">
+              <div className="btn-row storage-upgrade-actions">
+                <button type="button" className="btn btn-primary" onClick={handleExportAllForUpgrade}>
+                  Export all jobs
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={handleUpgradeKeep}>
+                  Keep data & continue
+                </button>
+                <button type="button" className="btn btn-danger" onClick={handleUpgradeClear}>
+                  Clear & finish update
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  )
+}
