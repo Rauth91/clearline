@@ -1,11 +1,5 @@
-.venv/
-__pycache__/
-*.pyc
-.pytest_cache/
 node_modules/
 dist/
 release/
 .DS_Store
-*.pcap
-*.pcapng
 .env

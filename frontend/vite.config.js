@@ -7,18 +7,14 @@ export default defineConfig({
   base: './',
   server: {
     port: 5173,
-    proxy: {
-      '/analyze': 'http://localhost:8000',
-      '/health': 'http://localhost:8000',
-    }
   },
   build: {
     rollupOptions: {
       output: {
         manualChunks: {
           react: ['react', 'react-dom'],
-        }
-      }
-    }
-  }
+        },
+      },
+    },
+  },
 })
