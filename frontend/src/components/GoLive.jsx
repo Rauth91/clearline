@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import ProvisioningSheet, { buildProvisionData } from './ProvisioningSheet.jsx'
 import {
@@ -48,24 +48,20 @@ export default function GoLive({ jobId }) {
     if (activePanel === 'provision') setSurveyTick(t => t + 1)
   }, [activePanel])
 
-  // Refresh Survey/Design-backed provision when returning to this tab or workspace
-  useEffect(() => {
-    function refresh() {
-      setSurveyTick(t => t + 1)
-    }
-    window.addEventListener('focus', refresh)
-    document.addEventListener('visibilitychange', refresh)
-    refresh()
-    return () => {
-      window.removeEventListener('focus', refresh)
-      document.removeEventListener('visibilitychange', refresh)
-    }
-  }, [jobId])
+  const latestGoLive = useRef(golive)
+  latestGoLive.current = golive
 
   useEffect(() => {
-    if (!jobId) return
-    saveJobGoLive(jobId, golive)
+    if (!jobId) return undefined
+    const t = setTimeout(() => {
+      saveJobGoLive(jobId, latestGoLive.current)
+    }, 450)
+    return () => clearTimeout(t)
   }, [golive, jobId])
+
+  useEffect(() => () => {
+    if (jobId) saveJobGoLive(jobId, latestGoLive.current)
+  }, [jobId])
 
   useEffect(() => {
     if (!activePanel) return undefined

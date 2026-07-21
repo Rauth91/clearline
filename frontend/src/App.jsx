@@ -3,11 +3,8 @@
  * Jobs hub + Site Survey | System Design | Go-Live
  */
 
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import SiteSurvey from './components/SiteSurvey.jsx'
-import SystemDesign from './components/SystemDesign.jsx'
-import GoLive from './components/GoLive.jsx'
 import JobsHub from './components/JobsHub.jsx'
 import {
   acknowledgeStorageVersionKeepData,
@@ -23,6 +20,10 @@ import {
   setActiveJobId,
   subscribeSaveStatus,
 } from './lib/jobModel.js'
+
+const SiteSurvey = lazy(() => import('./components/SiteSurvey.jsx'))
+const SystemDesign = lazy(() => import('./components/SystemDesign.jsx'))
+const GoLive = lazy(() => import('./components/GoLive.jsx'))
 
 const WORKSPACES = [
   { id: 'siteSurvey', label: 'Site Survey', description: 'Field handoff and readiness' },
@@ -204,9 +205,11 @@ export default function App() {
               onOpenJob={handleOpenJob}
             />
           )}
-          {!showHub && activeWorkspace === 'siteSurvey' && <SiteSurvey jobId={jobId} />}
-          {!showHub && activeWorkspace === 'systemDesign' && <SystemDesign jobId={jobId} />}
-          {!showHub && activeWorkspace === 'goLive' && <GoLive jobId={jobId} />}
+          <Suspense fallback={<div className="workspace-loading">Loading…</div>}>
+            {!showHub && activeWorkspace === 'siteSurvey' && <SiteSurvey jobId={jobId} />}
+            {!showHub && activeWorkspace === 'systemDesign' && <SystemDesign jobId={jobId} />}
+            {!showHub && activeWorkspace === 'goLive' && <GoLive jobId={jobId} />}
+          </Suspense>
         </div>
       </main>
 

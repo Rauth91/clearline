@@ -2,7 +2,48 @@
 
 Field ops for voice installs — Jobs hub, Site Survey, System Design, and Go-Live.
 
-Dark-first UI. Built for Cloudflare Pages (static frontend — customer job data stays in the browser or in exported job files, not on the server).
+Customer job data stays on the device (browser storage or exported `.clearline` files). Cloudflare / the desktop shell only host the app UI.
+
+## Desktop app (recommended for field techs)
+
+Double-click installers — no website, no Node for techs.
+
+```bash
+# From repo root (build machine)
+npm install
+npm run dist
+```
+
+Installers land in `release/`:
+
+- **Mac:** `ClearLine-*.dmg` (or `.zip`)
+- **Windows:** `ClearLine Setup *.exe` (installer) and `ClearLine *.exe` (portable)
+
+Techs install once, then open **ClearLine** like any other app. Works offline.
+
+### Dev run (Electron + Vite)
+
+```bash
+# Terminal 1
+cd frontend && npm install && npm run dev
+
+# Terminal 2
+cd .. && npm install && CLEARLINE_DEV_URL=http://localhost:5173 npm run dev
+```
+
+## Web (Cloudflare Pages)
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+Pages settings:
+
+- **Root directory:** `frontend`
+- **Build command:** `npm run build`
+- **Build output directory:** `dist`
 
 ## What it does
 
@@ -11,26 +52,4 @@ Dark-first UI. Built for Cloudflare Pages (static frontend — customer job data
 - **System Design** — hours, auto attendant, night button, call flow; import from Survey
 - **Go-Live** — cutover, install checklist, provisioning sheet, customer handoff
 
-**Privacy workflow:** Export a `.clearline` job file → store offline → Delete from browser → Import when you need it again.
-
-## Local development
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Open http://localhost:5173
-
-## Deploy on Cloudflare Pages (~$0)
-
-1. Push this repo to GitHub
-2. Cloudflare Dashboard → **Workers & Pages** → **Create** → **Pages** → connect the repo
-3. Build settings:
-   - **Root directory:** `frontend`
-   - **Build command:** `npm run build`
-   - **Build output directory:** `dist`
-4. Deploy
-
-Cloudflare only hosts the app shell. It does not receive Survey / Design / Go-Live data.
+**Privacy workflow:** Export a `.clearline` job file → store offline → Delete from the app → Import when you need it again.

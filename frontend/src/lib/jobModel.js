@@ -94,10 +94,22 @@ export function checkStoragePressure() {
   }
 }
 
+let lastPressureCheckAt = 0
 function warnIfStoragePressure() {
+  const now = Date.now()
+  if (now - lastPressureCheckAt < 15000) return
+  lastPressureCheckAt = now
   const pressure = checkStoragePressure()
   if (pressure) emitSaveStatus(pressure)
 }
+
+function photosFingerprint(photos) {
+  return (photos || [])
+    .map(p => `${p.id}|${p.name || ''}|${p.caption || ''}|${p.category || ''}|${p.dataUrl ? 1 : 0}`)
+    .join(';')
+}
+
+const lastSavedPhotoFp = new Map()
 
 function hasAnyJobData() {
   const jobs = readJson(INDEX_KEY, [])
@@ -323,6 +335,7 @@ export function deleteJob(jobId) {
   localStorage.removeItem(jobKey(jobId, 'survey'))
   localStorage.removeItem(jobKey(jobId, 'design'))
   localStorage.removeItem(jobKey(jobId, 'golive'))
+  lastSavedPhotoFp.delete(jobId)
   deleteJobPhotos(jobId).catch(() => {})
   const jobs = listAllJobs().filter(j => j.id !== jobId)
   writeJson(INDEX_KEY, jobs)
@@ -645,22 +658,27 @@ export async function saveJobSurvey(jobId, survey) {
   if (!jobId) return { ok: false }
   const next = normalizeNetworkSurvey({ ...survey, updatedAt: new Date().toISOString() })
   const photos = next.photos || []
+  const fp = photosFingerprint(photos)
+  const photosChanged = lastSavedPhotoFp.get(jobId) !== fp
 
-  try {
-    if (photosHaveDataUrls(photos)) {
-      await putJobPhotos(jobId, photos)
-    } else if (photos.length === 0) {
-      await putJobPhotos(jobId, [])
-    } else {
-      await putJobPhotos(jobId, await mergePhotosForStore(jobId, photos))
+  if (photosChanged) {
+    try {
+      if (photosHaveDataUrls(photos)) {
+        await putJobPhotos(jobId, photos)
+      } else if (photos.length === 0) {
+        await putJobPhotos(jobId, [])
+      } else {
+        await putJobPhotos(jobId, await mergePhotosForStore(jobId, photos))
+      }
+      lastSavedPhotoFp.set(jobId, fp)
+    } catch (err) {
+      console.error(err)
+      emitSaveStatus({
+        type: 'error',
+        message: 'Could not save site photos. Try fewer or smaller photos, then export a job file as backup.',
+      })
+      return { ok: false }
     }
-  } catch (err) {
-    console.error(err)
-    emitSaveStatus({
-      type: 'error',
-      message: 'Could not save site photos. Try fewer or smaller photos, then export a job file as backup.',
-    })
-    return { ok: false }
   }
 
   const lean = { ...next, photos: stripPhotoDataUrls(photos) }

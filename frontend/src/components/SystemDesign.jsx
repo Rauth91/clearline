@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import CallFlowDiagram from './CallFlowDiagram.jsx'
 import {
@@ -155,16 +155,31 @@ export default function SystemDesign({ jobId }) {
     setSurveyDrift(isDesignOutOfDate(jobId))
   }, [jobId])
 
-  useEffect(() => {
-    if (!jobId) return
-    saveJobDesign(jobId, design)
-    setSurveyDrift(isDesignOutOfDate(jobId))
-  }, [design, jobId])
+  const latestDesign = useRef(design)
+  latestDesign.current = design
 
   useEffect(() => {
     if (!jobId) return undefined
-    const id = setInterval(() => setSurveyDrift(isDesignOutOfDate(jobId)), 2000)
-    return () => clearInterval(id)
+    const t = setTimeout(() => {
+      saveJobDesign(jobId, latestDesign.current)
+      setSurveyDrift(isDesignOutOfDate(jobId))
+    }, 450)
+    return () => clearTimeout(t)
+  }, [design, jobId])
+
+  useEffect(() => () => {
+    if (jobId) {
+      saveJobDesign(jobId, latestDesign.current)
+    }
+  }, [jobId])
+
+  useEffect(() => {
+    if (!jobId) return undefined
+    function onFocus() {
+      setSurveyDrift(isDesignOutOfDate(jobId))
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
   }, [jobId])
 
   useEffect(() => {

@@ -55,7 +55,10 @@ export default function SiteSurvey({ jobId }) {
   const [speedRun, setSpeedRun] = useState(0)
   const [mcRun, setMcRun] = useState(0)
   const importRef = useRef(null)
-  const readiness = useMemo(() => analyzeReadiness(survey), [survey])
+  const readiness = useMemo(
+    () => analyzeReadiness(survey),
+    [survey.speedtests, survey.visualwareRuns, survey.phoneCount],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -72,10 +75,21 @@ export default function SiteSurvey({ jobId }) {
     return () => { cancelled = true }
   }, [jobId])
 
+  const latestSurvey = useRef(survey)
+  latestSurvey.current = survey
+
   useEffect(() => {
-    if (!jobId || !ready) return
-    saveJobSurvey(jobId, survey)
+    if (!jobId || !ready) return undefined
+    const t = setTimeout(() => {
+      saveJobSurvey(jobId, latestSurvey.current)
+    }, 450)
+    return () => clearTimeout(t)
   }, [survey, jobId, ready])
+
+  // Flush pending edits when leaving the job / unmounting
+  useEffect(() => () => {
+    if (jobId && ready) saveJobSurvey(jobId, latestSurvey.current)
+  }, [jobId, ready])
 
   useEffect(() => {
     if (!activePanel) return undefined
@@ -121,14 +135,14 @@ export default function SiteSurvey({ jobId }) {
     const speedtests = [...(survey.speedtests || [])]
     while (speedtests.length < NETWORK_RUN_COUNT) speedtests.push({})
     speedtests[index] = { ...speedtests[index], [field]: value }
-    updateSurvey(normalizeNetworkSurvey({ ...survey, speedtests }))
+    updateSurvey({ speedtests })
   }
 
   function updateVisualware(index, field, value) {
     const visualwareRuns = [...(survey.visualwareRuns || [])]
     while (visualwareRuns.length < NETWORK_RUN_COUNT) visualwareRuns.push({})
     visualwareRuns[index] = { ...visualwareRuns[index], [field]: value }
-    updateSurvey(normalizeNetworkSurvey({ ...survey, visualwareRuns }))
+    updateSurvey({ visualwareRuns })
   }
 
   function parseReport(index = mcRun, text) {
@@ -142,11 +156,10 @@ export default function SiteSurvey({ jobId }) {
     const visualwareRuns = [...(survey.visualwareRuns || [])]
     while (visualwareRuns.length < NETWORK_RUN_COUNT) visualwareRuns.push({})
     visualwareRuns[index] = { ...visualwareRuns[index], ...data, rawPaste: paste }
-    updateSurvey(normalizeNetworkSurvey({
-      ...survey,
+    updateSurvey({
       visualwareRuns,
       phoneCount: data.callsSimulated || survey.phoneCount,
-    }))
+    })
     setParseNote({ type: 'ok', text: `Parsed ${matched} field(s) into MyConnection run ${index + 1}.` })
   }
 

@@ -33,6 +33,7 @@ export default function TopologyEditor({ topology, onChange }) {
   const [zoom, setZoom] = useState(1)
   const [selectedId, setSelectedId] = useState(null)
   const [selectedPort, setSelectedPort] = useState(null)
+  const [dragPos, setDragPos] = useState(null)
   const canvas = topologyCanvasSize(nodes)
   const selected = nodes.find(n => n.id === selectedId) || null
 
@@ -118,22 +119,27 @@ export default function TopologyEditor({ topology, onChange }) {
     const start = point(evt, svg)
     const origin = { x: node.x, y: node.y }
     let moved = false
+    let last = { x: node.x, y: node.y }
 
     function move(moveEvt) {
       const current = point(moveEvt, svg)
       const dx = current.x - start.x
       const dy = current.y - start.y
       if (Math.hypot(dx, dy) > 3) moved = true
-      updateNode(node.id, {
+      last = {
         x: Math.max(NODE_HALF_W + 12, origin.x + dx),
         y: Math.max(NODE_HALF_H + 12, origin.y + dy),
-      })
+      }
+      setDragPos({ id: node.id, ...last })
     }
 
     function up() {
       window.removeEventListener('mousemove', move)
       window.removeEventListener('mouseup', up)
-      if (!moved) {
+      setDragPos(null)
+      if (moved) {
+        updateNode(node.id, last)
+      } else {
         setSelectedId(node.id)
         setSelectedPort(null)
       }
@@ -143,10 +149,13 @@ export default function TopologyEditor({ topology, onChange }) {
     window.addEventListener('mouseup', up)
   }
 
-  const nodeMap = Object.fromEntries(nodes.map(n => [n.id, n]))
+  const displayNodes = dragPos
+    ? nodes.map(n => (n.id === dragPos.id ? { ...n, x: dragPos.x, y: dragPos.y } : n))
+    : nodes
+  const nodeMap = Object.fromEntries(displayNodes.map(n => [n.id, n]))
   const displayW = canvas.width * zoom
   const displayH = canvas.height * zoom
-  const slots = assignLinkSlots(nodes, links)
+  const slots = assignLinkSlots(displayNodes, links)
 
   return (
     <div className="topology-editor">
@@ -202,7 +211,7 @@ export default function TopologyEditor({ topology, onChange }) {
             )
           })}
 
-          {nodes.map(node => {
+          {displayNodes.map(node => {
             const isSelected = node.id === selectedId
             return (
               <g
