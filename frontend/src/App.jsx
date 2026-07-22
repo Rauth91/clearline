@@ -5,6 +5,7 @@
 
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import BrandMark from './components/BrandMark.jsx'
 import JobsHub from './components/JobsHub.jsx'
 import {
   acknowledgeStorageVersionKeepData,
@@ -30,23 +31,6 @@ const WORKSPACES = [
   { id: 'systemDesign', label: 'System Design', description: 'Plan voice architecture' },
   { id: 'goLive', label: 'Go-Live', description: 'Cutover, install, handoff' },
 ]
-
-function BrandMark() {
-  return (
-    <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
-      <rect x="1.5" y="1.5" width="29" height="29" rx="7" fill="none" stroke="currentColor" strokeWidth="1.25" opacity="0.45" />
-      <path
-        className="brand-mark-pulse"
-        d="M6 16h4l2.5-6 4 12 2.5-6H26"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
 
 export default function App() {
   const [activeWorkspace, setActiveWorkspace] = useState('siteSurvey')
