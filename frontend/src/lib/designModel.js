@@ -2,6 +2,8 @@
  * System Design export helpers — HTML / Word / PDF
  */
 
+import { callFlowAscii } from './callFlowShape.js'
+
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -48,23 +50,6 @@ function aaOptionsHtml(aa = {}) {
   if (aa.timeoutAction) rows.push(`<tr><th>Timeout</th><td>${esc(aa.timeoutAction)}</td></tr>`)
   if (aa.invalidAction) rows.push(`<tr><th>Invalid</th><td>${esc(aa.invalidAction)}</td></tr>`)
   return rows.join('')
-}
-
-function callFlowAscii(design) {
-  const main = (design.mainNumbers || []).find(n => n.number || n.label)
-  const entry = main?.number || main?.label || 'Main DID'
-  const opts = []
-  for (let i = 0; i <= 9; i += 1) {
-    const v = String(design.autoAttendant?.[`option${i}`] || '').trim()
-    if (v) opts.push(`  ${i} → ${v}`)
-  }
-  const night = design.nightButton?.destination || design.callFlow?.afterHoursPath || 'After-hours path'
-  return [
-    entry,
-    '  ├─ Open hours → Auto attendant',
-    ...(opts.length ? opts : ['  │   (menu options TBD)']),
-    `  └─ Closed / night → ${night}`,
-  ].join('\n')
 }
 
 export function buildDesignHtmlReport(design, completion = {}, options = {}) {

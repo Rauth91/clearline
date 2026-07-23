@@ -1,12 +1,13 @@
 /**
  * ClearLine — Field product shell
- * Jobs hub + Site Survey | System Design | Go-Live
+ * Jobs hub | Accounts hub + Site Survey | System Design | Go-Live
  */
 
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import BrandMark from './components/BrandMark.jsx'
 import JobsHub from './components/JobsHub.jsx'
+import AccountsHub from './components/AccountsHub.jsx'
 import {
   acknowledgeStorageVersionKeepData,
   completeStorageVersionUpgrade,
@@ -21,10 +22,16 @@ import {
   setActiveJobId,
   subscribeSaveStatus,
 } from './lib/jobModel.js'
+import {
+  getAccount,
+  getActiveAccountId,
+  setActiveAccountId,
+} from './lib/accountModel.js'
 
 const SiteSurvey = lazy(() => import('./components/SiteSurvey.jsx'))
 const SystemDesign = lazy(() => import('./components/SystemDesign.jsx'))
 const GoLive = lazy(() => import('./components/GoLive.jsx'))
+const AccountCallFlow = lazy(() => import('./components/AccountCallFlow.jsx'))
 
 const WORKSPACES = [
   { id: 'siteSurvey', label: 'Site Survey', description: 'Field handoff and readiness' },
@@ -34,10 +41,16 @@ const WORKSPACES = [
 
 export default function App() {
   const [activeWorkspace, setActiveWorkspace] = useState('siteSurvey')
+  const [hubMode, setHubMode] = useState('jobs') // jobs | accounts
   const [jobId, setJobId] = useState(() => {
     ensureStorageVersion()
     migrateLegacyDrafts()
     return getActiveJobId()
+  })
+  const [accountId, setAccountId] = useState(() => {
+    // Prefer job if one is active; otherwise restore account
+    if (getActiveJobId()) return null
+    return getActiveAccountId()
   })
   const [hubTick, setHubTick] = useState(0)
   const [theme, setTheme] = useState(() => {
@@ -49,7 +62,8 @@ export default function App() {
   const [storageUpgrade, setStorageUpgrade] = useState(() => getStorageVersionStatus())
 
   const job = jobId ? getJob(jobId) : null
-  const showHub = !jobId
+  const account = accountId ? getAccount(accountId) : null
+  const showHub = !jobId && !accountId
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -77,14 +91,34 @@ export default function App() {
       setHubTick(t => t + 1)
       return
     }
+    setActiveAccountId(null)
+    setAccountId(null)
     setActiveJobId(id)
     setJobId(id)
     setActiveWorkspace(workspace)
+    setHubMode('jobs')
   }
 
-  function goToJobs() {
+  function handleOpenAccount(id) {
+    if (!id) {
+      setActiveAccountId(null)
+      setAccountId(null)
+      setHubTick(t => t + 1)
+      return
+    }
     setActiveJobId(null)
     setJobId(null)
+    setActiveAccountId(id)
+    setAccountId(id)
+    setHubMode('accounts')
+  }
+
+  function goToHub(mode = hubMode) {
+    setActiveJobId(null)
+    setJobId(null)
+    setActiveAccountId(null)
+    setAccountId(null)
+    setHubMode(mode)
     setHubTick(t => t + 1)
   }
 
@@ -92,7 +126,6 @@ export default function App() {
     const jobs = listJobs()
     for (const j of jobs) {
       try {
-        // Stagger downloads slightly so the browser keeps each file
         await exportJobFileAsync(j.id)
         await new Promise(r => setTimeout(r, 350))
       } catch (err) {
@@ -115,6 +148,16 @@ export default function App() {
     setStorageUpgrade({ ok: true })
   }
 
+  const brandTag = (() => {
+    if (job?.customer) {
+      return `${job.customer}${job.site ? ` · ${job.site}` : ''}`
+    }
+    if (account?.name) {
+      return `${account.name}${account.site ? ` · ${account.site}` : ''}`
+    }
+    return 'Survey. Design. Go live.'
+  })()
+
   return (
     <div className="app-root">
       <div className="app-atmosphere" aria-hidden="true" />
@@ -123,16 +166,17 @@ export default function App() {
           <BrandMark />
           <div className="brand-copy">
             <div className="brand-name">ClearLine</div>
-            <div className="brand-tag">
-              {job?.customer ? job.customer : 'Survey. Design. Go live.'}
-              {job?.site ? ` · ${job.site}` : ''}
-            </div>
+            <div className="brand-tag">{brandTag}</div>
           </div>
         </div>
         <div className="header-actions">
-          {jobId && (
-            <button type="button" className="btn btn-secondary jobs-switch" onClick={goToJobs}>
-              Jobs
+          {(jobId || accountId) && (
+            <button
+              type="button"
+              className="btn btn-secondary jobs-switch"
+              onClick={() => goToHub(jobId ? 'jobs' : 'accounts')}
+            >
+              {jobId ? 'Jobs' : 'Accounts'}
             </button>
           )}
           <button
@@ -163,7 +207,30 @@ export default function App() {
         </div>
       )}
 
-      {!showHub && (
+      {showHub && (
+        <div className="app-nav-wrap">
+          <nav className="hub-mode-tabs" aria-label="Library">
+            <button
+              type="button"
+              className={`hub-mode-tab${hubMode === 'jobs' ? ' is-active' : ''}`}
+              onClick={() => setHubMode('jobs')}
+            >
+              Jobs
+              <small>Field installs</small>
+            </button>
+            <button
+              type="button"
+              className={`hub-mode-tab${hubMode === 'accounts' ? ' is-active' : ''}`}
+              onClick={() => setHubMode('accounts')}
+            >
+              Accounts
+              <small>Call flow charts</small>
+            </button>
+          </nav>
+        </div>
+      )}
+
+      {!showHub && jobId && (
         <div className="app-nav-wrap">
           <nav className="workspace-tabs workspace-tabs-3" aria-label="Primary workspaces">
             {WORKSPACES.map(workspace => (
@@ -181,18 +248,33 @@ export default function App() {
         </div>
       )}
 
-      <main className="app-body" key={showHub ? `hub-${hubTick}` : `${jobId}-${activeWorkspace}`}>
+      <main
+        className="app-body"
+        key={showHub ? `hub-${hubMode}-${hubTick}` : (jobId ? `${jobId}-${activeWorkspace}` : `account-${accountId}`)}
+      >
         <div className="app-stage">
-          {showHub && (
+          {showHub && hubMode === 'jobs' && (
             <JobsHub
               refreshKey={hubTick}
               onOpenJob={handleOpenJob}
             />
           )}
+          {showHub && hubMode === 'accounts' && (
+            <AccountsHub
+              refreshKey={hubTick}
+              onOpenAccount={handleOpenAccount}
+            />
+          )}
           <Suspense fallback={<div className="workspace-loading">Loading…</div>}>
-            {!showHub && activeWorkspace === 'siteSurvey' && <SiteSurvey jobId={jobId} />}
-            {!showHub && activeWorkspace === 'systemDesign' && <SystemDesign jobId={jobId} />}
-            {!showHub && activeWorkspace === 'goLive' && <GoLive jobId={jobId} />}
+            {!showHub && jobId && activeWorkspace === 'siteSurvey' && <SiteSurvey jobId={jobId} />}
+            {!showHub && jobId && activeWorkspace === 'systemDesign' && <SystemDesign jobId={jobId} />}
+            {!showHub && jobId && activeWorkspace === 'goLive' && <GoLive jobId={jobId} />}
+            {!showHub && accountId && (
+              <AccountCallFlow
+                accountId={accountId}
+                onBack={() => goToHub('accounts')}
+              />
+            )}
           </Suspense>
         </div>
       </main>

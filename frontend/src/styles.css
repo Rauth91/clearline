@@ -1486,6 +1486,126 @@ a.btn {
   overflow: hidden;
 }
 
+.call-flow-preview-hit {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: color-mix(in srgb, var(--bg0, var(--bg)) 35%, var(--bg1));
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+  position: relative;
+  text-align: left;
+}
+
+.call-flow-preview-svg {
+  display: block;
+  width: 100%;
+  height: 220px;
+  color: var(--ink-soft);
+}
+
+.call-flow-preview-cta {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--bg1) 88%, var(--accent));
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 0.8rem;
+  font-weight: 650;
+  font-family: var(--font);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.call-flow-overlay-backdrop {
+  z-index: 90;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+.call-flow-overlay {
+  width: min(96vw, 1280px);
+  height: min(94vh, 900px);
+  max-height: 94vh;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) + 4px);
+  background: var(--bg1);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 80px color-mix(in srgb, #000 45%, transparent);
+}
+
+.call-flow-overlay .call-flow {
+  border: 0;
+  border-radius: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.call-flow-overlay .call-flow-explorer {
+  flex: 1;
+  min-height: 0;
+}
+
+.call-flow-overlay .call-flow-steps {
+  max-height: none;
+}
+
+.call-flow-meta-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.call-flow-follow-pos {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: 0 4px;
+}
+
+.cf-dot-night { background: var(--warn); }
+
+.cf-tone-night .cf-shape {
+  fill: color-mix(in srgb, var(--warn-soft) 40%, var(--bg1));
+  stroke: color-mix(in srgb, var(--warn) 50%, var(--line));
+}
+
+.cf-edge-night {
+  color: color-mix(in srgb, var(--warn) 70%, var(--ink-soft));
+}
+
+.cf-node.is-follow .cf-shape {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 45%, transparent));
+}
+
+.call-flow-step.is-follow {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.call-flow-mode-expanded .cf-label {
+  font-size: 13px;
+}
+
+.call-flow-mode-expanded .cf-sublabel {
+  font-size: 11px;
+}
+
+
 .call-flow-meta {
   display: flex;
   justify-content: space-between;
@@ -1536,19 +1656,199 @@ a.btn {
 .cf-dot-branch { background: var(--warn); }
 .cf-dot-leaf { background: var(--ok); }
 
+.call-flow-explorer {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  gap: 0;
+  min-height: 0;
+}
+
+.call-flow-explorer.is-compact {
+  grid-template-columns: 1fr;
+}
+
+.call-flow-steps {
+  border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg2) 45%, transparent);
+  max-height: 560px;
+  overflow: auto;
+  padding: 10px 0;
+}
+
+.call-flow-steps-head {
+  padding: 4px 14px 10px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.call-flow-step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.call-flow-step {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: inherit;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-family: var(--font);
+}
+
+.call-flow-step:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.call-flow-step.is-active {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.call-flow-step-idx {
+  flex: 0 0 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+.call-flow-step.is-active .call-flow-step-idx {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
+  color: var(--accent);
+}
+
+.call-flow-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.call-flow-step-body strong {
+  font-size: 0.84rem;
+  font-weight: 650;
+  color: var(--ink);
+  line-height: 1.25;
+}
+
+.call-flow-step-body span {
+  font-size: 0.75rem;
+  color: var(--muted);
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.call-flow-map-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.call-flow-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.call-flow-toolbar .btn {
+  padding: 4px 10px;
+  min-width: 36px;
+  font-size: 0.9rem;
+}
+
+.call-flow-zoom-label {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.call-flow-viewport {
+  position: relative;
+  overflow: hidden;
+  cursor: grab;
+  background: color-mix(in srgb, var(--bg0, var(--bg)) 40%, var(--bg1));
+  touch-action: none;
+  user-select: none;
+}
+
+.call-flow-viewport.is-dragging {
+  cursor: grabbing;
+}
+
+.call-flow-svg {
+  display: block;
+  transform-origin: 0 0;
+  color: var(--ink-soft);
+}
+
+.call-flow-detail {
+  border-top: 1px solid var(--line);
+  padding: 14px 16px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg1));
+}
+
+.call-flow-detail-kicker {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.call-flow-detail h3 {
+  margin: 4px 0 6px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.call-flow-detail p {
+  margin: 0 0 10px;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.call-flow-detail p.muted {
+  color: var(--muted);
+}
+
+.call-flow-detail-edge {
+  font-size: 0.8rem !important;
+  color: var(--muted) !important;
+}
+
 .call-flow-canvas {
   padding: 8px;
   color: var(--ink-soft);
 }
 
-.cf-node,
-.cf-edge {
-  animation: cf-fade 420ms ease both;
-}
-
-@keyframes cf-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
+.cf-node.is-selected .cf-shape {
+  stroke: var(--accent);
+  stroke-width: 2.25;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 35%, transparent));
 }
 
 .cf-shape {
@@ -1573,16 +1873,31 @@ a.btn {
 
 .cf-label {
   fill: var(--ink);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 650;
   font-family: var(--font);
+  pointer-events: none;
+}
+
+.cf-label-left {
+  text-anchor: start;
+}
+
+.cf-sublabel {
+  fill: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  font-family: var(--font);
+  text-anchor: start;
+  pointer-events: none;
 }
 
 .cf-edge-label {
   fill: var(--muted);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 600;
   text-anchor: middle;
+  pointer-events: none;
 }
 
 .call-flow-compact {
@@ -1592,6 +1907,18 @@ a.btn {
 
 .call-flow-compact .call-flow-canvas {
   padding: 0;
+}
+
+@media (max-width: 900px) {
+  .call-flow-explorer {
+    grid-template-columns: 1fr;
+  }
+
+  .call-flow-steps {
+    max-height: 220px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
 }
 
 .export-hint {
@@ -3226,3 +3553,247 @@ a.btn {
   .workspace-tabs-3 { max-width: none; }
   .install-row { grid-template-columns: 1fr; }
 }
+
+/* Hub mode: Jobs | Accounts */
+.hub-mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  max-width: 420px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.hub-mode-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg1) 80%, transparent);
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.hub-mode-tab small {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+
+.hub-mode-tab.is-active {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg1));
+  color: var(--ink);
+}
+
+.hub-mode-tab.is-active small {
+  color: color-mix(in srgb, var(--accent) 70%, var(--muted));
+}
+
+.accounts-search {
+  max-width: 420px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Account call flow workspace */
+.account-call-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.route-tabs-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.route-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.route-tab {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg1) 85%, transparent);
+  color: var(--ink-soft);
+  padding: 8px 14px;
+  font-family: var(--font);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.route-tab.is-active {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg1));
+  color: var(--ink);
+}
+
+.route-tab-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.route-hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.route-number-label-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.route-number-label-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.account-flow-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.account-flow-form {
+  padding: 18px;
+}
+
+.account-flow-form .form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.account-flow-form .form-grid-2 {
+  grid-template-columns: 1fr 1fr;
+}
+
+.account-flow-form .field-span {
+  grid-column: 1 / -1;
+}
+
+.account-flow-form .field {
+  display: grid;
+  gap: 6px;
+}
+
+.account-flow-form .field span {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.account-flow-form .field input,
+.account-flow-form .field textarea,
+.account-flow-form .field select {
+  width: 100%;
+  background: var(--bg0, var(--bg));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  font-family: var(--font);
+}
+
+.account-flow-form .field textarea {
+  resize: vertical;
+  min-height: 56px;
+}
+
+.accounts-search input {
+  width: 100%;
+  background: var(--bg1);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  padding: 10px 12px;
+  font-size: 0.95rem;
+  font-family: var(--font);
+}
+
+.account-flow-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: sticky;
+  top: 12px;
+}
+
+.account-summary-preview {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg1);
+  padding: 12px 14px;
+}
+
+.account-summary-preview summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.account-summary-pre {
+  margin: 12px 0 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg2) 70%, transparent);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  max-height: 320px;
+  overflow: auto;
+}
+
+@media (max-width: 980px) {
+  .account-flow-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .account-flow-chart {
+    position: static;
+  }
+
+  .account-flow-form .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
