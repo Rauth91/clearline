@@ -1,11 +1,12 @@
 /**
  * ClearLine — Field product shell
- * Jobs hub | Accounts hub + Site Survey | System Design | Go-Live
+ * Home dashboard | Jobs | Accounts | Tools
  */
 
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import BrandMark from './components/BrandMark.jsx'
+import HomeHub from './components/HomeHub.jsx'
 import JobsHub from './components/JobsHub.jsx'
 import AccountsHub from './components/AccountsHub.jsx'
 import {
@@ -28,27 +29,47 @@ import {
   setActiveAccountId,
 } from './lib/accountModel.js'
 
-const SiteSurvey = lazy(() => import('./components/SiteSurvey.jsx'))
-const SystemDesign = lazy(() => import('./components/SystemDesign.jsx'))
-const GoLive = lazy(() => import('./components/GoLive.jsx'))
+const SiteSurvey    = lazy(() => import('./components/SiteSurvey.jsx'))
+const SystemDesign  = lazy(() => import('./components/SystemDesign.jsx'))
+const GoLive        = lazy(() => import('./components/GoLive.jsx'))
 const AccountCallFlow = lazy(() => import('./components/AccountCallFlow.jsx'))
 
+// Tools
+const YealinkCodes  = lazy(() => import('./components/YealinkCodes.jsx'))
+const CallDiagnostic = lazy(() => import('./components/CallDiagnostic.jsx'))
+const SymptomWizard = lazy(() => import('./components/SymptomWizard.jsx'))
+const PortChecklist = lazy(() => import('./components/PortChecklist.jsx'))
+const AlgoConfig    = lazy(() => import('./components/AlgoConfig.jsx'))
+const QuickCard     = lazy(() => import('./components/QuickCard.jsx'))
+const CodecRef      = lazy(() => import('./components/CodecRef.jsx'))
+
 const WORKSPACES = [
-  { id: 'siteSurvey', label: 'Site Survey', description: 'Field handoff and readiness' },
-  { id: 'systemDesign', label: 'System Design', description: 'Plan voice architecture' },
-  { id: 'goLive', label: 'Go-Live', description: 'Cutover, install, handoff' },
+  { id: 'siteSurvey',   label: 'Site Survey',   description: 'Field handoff and readiness' },
+  { id: 'systemDesign', label: 'System Design',  description: 'Plan voice architecture' },
+  { id: 'goLive',       label: 'Go-Live',        description: 'Cutover, install, handoff' },
 ]
 
+const TOOLS = [
+  { id: 'calldiag',   label: 'Call Diagnostic' },
+  { id: 'yealink',    label: 'Yealink Codes' },
+  { id: 'symptom',    label: 'Symptom Wizard' },
+  { id: 'ports',      label: 'Port Checklist' },
+  { id: 'algo',       label: 'Algo Config' },
+  { id: 'quickcard',  label: 'Quick Card' },
+  { id: 'codec',      label: 'Codec & QoS' },
+]
+
+// view: 'home' | 'jobs' | 'accounts' | 'job' | 'account' | 'tools'
 export default function App() {
+  const [view, setView] = useState('home')
+  const [activeTool, setActiveTool] = useState('calldiag')
   const [activeWorkspace, setActiveWorkspace] = useState('siteSurvey')
-  const [hubMode, setHubMode] = useState('jobs') // jobs | accounts
   const [jobId, setJobId] = useState(() => {
     ensureStorageVersion()
     migrateLegacyDrafts()
     return getActiveJobId()
   })
   const [accountId, setAccountId] = useState(() => {
-    // Prefer job if one is active; otherwise restore account
     if (getActiveJobId()) return null
     return getActiveAccountId()
   })
@@ -61,9 +82,14 @@ export default function App() {
   const [saveBanner, setSaveBanner] = useState(null)
   const [storageUpgrade, setStorageUpgrade] = useState(() => getStorageVersionStatus())
 
+  // Restore view from active job/account on mount
+  useEffect(() => {
+    if (jobId) setView('job')
+    else if (accountId) setView('account')
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const job = jobId ? getJob(jobId) : null
   const account = accountId ? getAccount(accountId) : null
-  const showHub = !jobId && !accountId
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -88,6 +114,7 @@ export default function App() {
     if (!id) {
       setActiveJobId(null)
       setJobId(null)
+      setView('jobs')
       setHubTick(t => t + 1)
       return
     }
@@ -96,13 +123,14 @@ export default function App() {
     setActiveJobId(id)
     setJobId(id)
     setActiveWorkspace(workspace)
-    setHubMode('jobs')
+    setView('job')
   }
 
   function handleOpenAccount(id) {
     if (!id) {
       setActiveAccountId(null)
       setAccountId(null)
+      setView('accounts')
       setHubTick(t => t + 1)
       return
     }
@@ -110,15 +138,20 @@ export default function App() {
     setJobId(null)
     setActiveAccountId(id)
     setAccountId(id)
-    setHubMode('accounts')
+    setView('account')
   }
 
-  function goToHub(mode = hubMode) {
+  function handleOpenTool(toolId) {
+    setActiveTool(toolId)
+    setView('tools')
+  }
+
+  function goHome() {
     setActiveJobId(null)
     setJobId(null)
     setActiveAccountId(null)
     setAccountId(null)
-    setHubMode(mode)
+    setView('home')
     setHubTick(t => t + 1)
   }
 
@@ -149,34 +182,36 @@ export default function App() {
   }
 
   const brandTag = (() => {
-    if (job?.customer) {
-      return `${job.customer}${job.site ? ` · ${job.site}` : ''}`
-    }
-    if (account?.name) {
-      return `${account.name}${account.site ? ` · ${account.site}` : ''}`
-    }
+    if (job?.customer) return `${job.customer}${job.site ? ` · ${job.site}` : ''}`
+    if (account?.name) return `${account.name}${account.site ? ` · ${account.site}` : ''}`
+    if (view === 'tools') return TOOLS.find(t => t.id === activeTool)?.label || 'Tools'
     return 'Survey. Design. Go live.'
   })()
+
+  // Which back label to show
+  const backLabel = view === 'job' ? 'Jobs' : view === 'account' ? 'Accounts' : view === 'tools' ? 'Tools' : null
 
   return (
     <div className="app-root">
       <div className="app-atmosphere" aria-hidden="true" />
       <header className="app-header">
         <div className="brand">
-          <BrandMark />
-          <div className="brand-copy">
-            <div className="brand-name">ClearLine</div>
-            <div className="brand-tag">{brandTag}</div>
-          </div>
+          <button type="button" className="brand-btn" onClick={goHome} aria-label="Go to home">
+            <BrandMark />
+            <div className="brand-copy">
+              <div className="brand-name">ClearLine</div>
+              <div className="brand-tag">{brandTag}</div>
+            </div>
+          </button>
         </div>
         <div className="header-actions">
-          {(jobId || accountId) && (
+          {(view === 'job' || view === 'account' || view === 'tools' || view === 'jobs' || view === 'accounts') && (
             <button
               type="button"
               className="btn btn-secondary jobs-switch"
-              onClick={() => goToHub(jobId ? 'jobs' : 'accounts')}
+              onClick={goHome}
             >
-              {jobId ? 'Jobs' : 'Accounts'}
+              Home
             </button>
           )}
           <button
@@ -207,30 +242,8 @@ export default function App() {
         </div>
       )}
 
-      {showHub && (
-        <div className="app-nav-wrap">
-          <nav className="hub-mode-tabs" aria-label="Library">
-            <button
-              type="button"
-              className={`hub-mode-tab${hubMode === 'jobs' ? ' is-active' : ''}`}
-              onClick={() => setHubMode('jobs')}
-            >
-              Jobs
-              <small>Field installs</small>
-            </button>
-            <button
-              type="button"
-              className={`hub-mode-tab${hubMode === 'accounts' ? ' is-active' : ''}`}
-              onClick={() => setHubMode('accounts')}
-            >
-              Accounts
-              <small>Call flow charts</small>
-            </button>
-          </nav>
-        </div>
-      )}
-
-      {!showHub && jobId && (
+      {/* Job workspace tabs */}
+      {view === 'job' && (
         <div className="app-nav-wrap">
           <nav className="workspace-tabs workspace-tabs-3" aria-label="Primary workspaces">
             {WORKSPACES.map(workspace => (
@@ -248,33 +261,57 @@ export default function App() {
         </div>
       )}
 
+      {/* Tools tabs */}
+      {view === 'tools' && (
+        <div className="app-nav-wrap">
+          <nav className="workspace-tabs" aria-label="Tools" style={{ '--tab-count': TOOLS.length }}>
+            {TOOLS.map(tool => (
+              <button
+                key={tool.id}
+                type="button"
+                onClick={() => setActiveTool(tool.id)}
+                className={`workspace-tab${activeTool === tool.id ? ' workspace-tab-active' : ''}`}
+              >
+                <span>{tool.label}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+      )}
+
       <main
         className="app-body"
-        key={showHub ? `hub-${hubMode}-${hubTick}` : (jobId ? `${jobId}-${activeWorkspace}` : `account-${accountId}`)}
+        key={`${view}-${view === 'job' ? jobId : ''}-${view === 'account' ? accountId : ''}-${view === 'tools' ? activeTool : ''}-${hubTick}`}
       >
         <div className="app-stage">
-          {showHub && hubMode === 'jobs' && (
-            <JobsHub
-              refreshKey={hubTick}
-              onOpenJob={handleOpenJob}
-            />
-          )}
-          {showHub && hubMode === 'accounts' && (
-            <AccountsHub
-              refreshKey={hubTick}
-              onOpenAccount={handleOpenAccount}
-            />
-          )}
           <Suspense fallback={<div className="workspace-loading">Loading…</div>}>
-            {!showHub && jobId && activeWorkspace === 'siteSurvey' && <SiteSurvey jobId={jobId} />}
-            {!showHub && jobId && activeWorkspace === 'systemDesign' && <SystemDesign jobId={jobId} />}
-            {!showHub && jobId && activeWorkspace === 'goLive' && <GoLive jobId={jobId} />}
-            {!showHub && accountId && (
-              <AccountCallFlow
-                accountId={accountId}
-                onBack={() => goToHub('accounts')}
+            {view === 'home' && (
+              <HomeHub
+                refreshKey={hubTick}
+                onOpenJob={handleOpenJob}
+                onOpenAccount={handleOpenAccount}
+                onOpenTool={handleOpenTool}
               />
             )}
+            {view === 'jobs' && (
+              <JobsHub refreshKey={hubTick} onOpenJob={handleOpenJob} />
+            )}
+            {view === 'accounts' && (
+              <AccountsHub refreshKey={hubTick} onOpenAccount={handleOpenAccount} />
+            )}
+            {view === 'job' && activeWorkspace === 'siteSurvey'   && <SiteSurvey jobId={jobId} />}
+            {view === 'job' && activeWorkspace === 'systemDesign'  && <SystemDesign jobId={jobId} />}
+            {view === 'job' && activeWorkspace === 'goLive'        && <GoLive jobId={jobId} />}
+            {view === 'account' && (
+              <AccountCallFlow accountId={accountId} onBack={() => setView('accounts')} />
+            )}
+            {view === 'tools' && activeTool === 'calldiag'  && <CallDiagnostic />}
+            {view === 'tools' && activeTool === 'yealink'   && <YealinkCodes />}
+            {view === 'tools' && activeTool === 'symptom'   && <SymptomWizard />}
+            {view === 'tools' && activeTool === 'ports'     && <PortChecklist />}
+            {view === 'tools' && activeTool === 'algo'      && <AlgoConfig />}
+            {view === 'tools' && activeTool === 'quickcard' && <QuickCard />}
+            {view === 'tools' && activeTool === 'codec'     && <CodecRef />}
           </Suspense>
         </div>
       </main>
@@ -292,7 +329,7 @@ export default function App() {
                 <div className="survey-kicker">Storage update</div>
                 <h2 id="storage-upgrade-title">Export before continuing</h2>
                 <p>
-                  ClearLine’s storage format changed. Export your job files first so nothing is lost.
+                  ClearLine's storage format changed. Export your job files first so nothing is lost.
                   You can keep existing jobs on this device, or clear them after exporting.
                 </p>
               </div>
@@ -303,10 +340,10 @@ export default function App() {
                   Export all jobs
                 </button>
                 <button type="button" className="btn btn-secondary" onClick={handleUpgradeKeep}>
-                  Keep data & continue
+                  Keep data &amp; continue
                 </button>
                 <button type="button" className="btn btn-danger" onClick={handleUpgradeClear}>
-                  Clear & finish update
+                  Clear &amp; finish update
                 </button>
               </div>
             </div>
