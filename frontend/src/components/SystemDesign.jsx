@@ -24,6 +24,7 @@ import {
   saveJobDesign,
 } from '../lib/jobModel.js'
 import { ConflictBanner } from './ConflictReview.jsx'
+import QuickCard from './QuickCard.jsx'
 
 const EMPTY_DESIGN = {
   project: {
@@ -90,6 +91,7 @@ const PANELS = [
   ['mainNumbers', 'Main numbers', 'Company lines used for AA and design'],
   ['users', 'Users & DIDs', 'Extensions, emails, DIDs, and voicemail per user'],
   ['assumptions', 'Assumptions', 'Risks, dependencies, and follow-ups'],
+  ['quickCard', 'Quick cards', 'Print desk cards autofilled from users on this job'],
 ]
 
 const YES_NO_FIELDS = new Set(['enabled', 'needed', 'perUser'])
@@ -368,7 +370,7 @@ export default function SystemDesign({ jobId }) {
           }}
         >
           <div
-            className={`section-modal${activePanel === 'topology' ? ' section-modal-wide' : ''}`}
+            className={`section-modal${activePanel === 'quickCard' ? ' section-modal-wide' : ''}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="section-modal-title"
@@ -397,6 +399,7 @@ export default function SystemDesign({ jobId }) {
             <div className="section-modal-body">
               <PanelBody
                 id={activePanel}
+                jobId={jobId}
                 design={design}
                 setDesign={setDesign}
                 onUpdate={update}
@@ -419,6 +422,7 @@ export default function SystemDesign({ jobId }) {
 
 function PanelBody({
   id,
+  jobId,
   design,
   setDesign,
   onUpdate,
@@ -430,6 +434,16 @@ function PanelBody({
   updateUser,
   removeUser,
 }) {
+  if (id === 'quickCard') {
+    return (
+      <QuickCard
+        embedded
+        jobId={jobId}
+        design={design}
+      />
+    )
+  }
+
   if (id === 'mainNumbers') {
     return (
       <div>
@@ -530,6 +544,12 @@ function PanelBody({
 }
 
 function panelProgress(design, id) {
+  if (id === 'quickCard') {
+    const n = (design.users || []).filter(u =>
+      String(u.name || '').trim() || String(u.extension || '').trim() || String(u.did || '').trim(),
+    ).length
+    return { filled: n > 0 ? 1 : 0, total: 1, ratio: n > 0 ? 1 : 0 }
+  }
   if (id === 'mainNumbers') {
     const n = design.mainNumbers?.length || 0
     return { filled: n, total: Math.max(1, n), ratio: n > 0 ? 1 : 0 }
