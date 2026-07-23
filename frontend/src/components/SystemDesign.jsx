@@ -23,6 +23,7 @@ import {
   loadJobSurvey,
   saveJobDesign,
 } from '../lib/jobModel.js'
+import { ConflictBanner } from './ConflictReview.jsx'
 
 const EMPTY_DESIGN = {
   project: {
@@ -288,6 +289,7 @@ export default function SystemDesign({ jobId }) {
 
   return (
     <section className="system-design">
+      <ConflictBanner jobId={jobId} />
       <div className="design-hero hero-grid">
         <div>
           <div className="survey-kicker">System design</div>

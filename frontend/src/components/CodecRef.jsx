@@ -7,7 +7,7 @@ import { useState } from 'react'
 
 const TABS = ['Codecs', 'QoS / DSCP', 'SIP Response Codes']
 
-const CODECS = [
+export const CODECS = [
   { name: 'G.711 PCMU', type: 'Narrowband', bandwidth: '87.2 kbps', payload: 0, ptime: '20ms', quality: 'Good', notes: 'US standard, widest carrier support. Use for all carrier trunks.' },
   { name: 'G.711 PCMA', type: 'Narrowband', bandwidth: '87.2 kbps', payload: 8, ptime: '20ms', quality: 'Good', notes: 'A-law variant (EU/international). Equivalent quality to PCMU.' },
   { name: 'G.722', type: 'Wideband HD', bandwidth: '87.2 kbps', payload: 9, ptime: '20ms', quality: 'Excellent', notes: 'HD voice at same bandwidth as G.711. Use for internal calls between Yealink phones.' },
@@ -19,7 +19,7 @@ const CODECS = [
   { name: 'iLBC', type: 'Narrowband', bandwidth: '15.2 / 13.3 kbps', payload: '96–127', ptime: '20/30ms', quality: 'Fair', notes: 'Very low bandwidth. Poor-connection resilient. Rarely used in enterprise.' },
 ]
 
-const DSCP = [
+export const DSCP = [
   { class: 'EF (Expedited Forwarding)', value: '46', hex: '0x2E', binary: '101110', tos: '0xB8', use: 'VoIP RTP (voice media)', critical: true },
   { class: 'CS3 (Class Selector 3)', value: '24', hex: '0x18', binary: '011000', tos: '0x60', use: 'SIP signaling (call control)', critical: true },
   { class: 'AF41', value: '34', hex: '0x22', binary: '100010', tos: '0x88', use: 'Video conferencing media', critical: false },
@@ -28,7 +28,7 @@ const DSCP = [
   { class: 'BE (Best Effort)', value: '0',  hex: '0x00', binary: '000000', tos: '0x00', use: 'Default — general internet traffic', critical: false },
 ]
 
-const QOS_TIPS = [
+export const QOS_TIPS = [
   { tip: 'Mark SIP at DSCP CS3 (24) on the router/firewall — not the phone VLAN switch.', platform: 'All' },
   { tip: 'Mark RTP at DSCP EF (46). Most Yealink phones do this by default — verify in web UI → Network → Advanced.', platform: 'Yealink' },
   { tip: 'Enable DSCP trust on the phone-side switch ports (trust cos or trust dscp).', platform: 'Cisco / Meraki' },
@@ -39,7 +39,7 @@ const QOS_TIPS = [
   { tip: 'Target jitter < 20ms, latency < 150ms one-way, packet loss < 1% for acceptable quality.', platform: 'All' },
 ]
 
-const SIP_CODES = [
+export const SIP_CODES = [
   { code: '100', class: '1xx', label: 'Trying', desc: 'Request received, processing. No action needed.', severity: 'info' },
   { code: '180', class: '1xx', label: 'Ringing', desc: 'Destination phone is ringing.', severity: 'info' },
   { code: '183', class: '1xx', label: 'Session Progress', desc: 'Early media (ringback from carrier). Normal.', severity: 'info' },

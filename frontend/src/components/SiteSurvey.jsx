@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import SurveyPhotos from './SurveyPhotos.jsx'
 import TopologyEditor from './TopologyEditor.jsx'
+import E911Section from './E911Section.jsx'
 import {
   NETWORK_RUN_COUNT,
   QUALITY_THRESHOLDS,
@@ -15,11 +16,13 @@ import {
   createEmptySurvey,
   downloadJson,
   downloadPdfReport,
+  emptySurveyUser,
   exportEditableDoc,
   exportHtmlReport,
   makeId,
 } from '../lib/surveyModel.js'
 import { loadJobSurveyAsync, saveJobSurvey } from '../lib/jobModel.js'
+import { ConflictBanner } from './ConflictReview.jsx'
 
 const TOOLS = [
   {
@@ -39,6 +42,7 @@ const PANELS = [
   ['site', 'Site', 'Customer, site, contacts, and access notes'],
   ['numbers', 'Numbers', 'Company main lines, fax, and toll-free'],
   ['users', 'Users', 'Names, emails, extensions, DIDs, and locations'],
+  ['e911', 'E911', 'Emergency locations and user assignments'],
   ['network', 'Network', '3 Speedtests + 3 MyConnection tests'],
   ['topology', 'Topology', 'Rack, switch, and phone layout'],
   ['photos', 'Photos', 'MDF, IDF, cabling, and site evidence'],
@@ -265,6 +269,7 @@ export default function SiteSurvey({ jobId }) {
 
   return (
     <section className="site-survey">
+      <ConflictBanner jobId={jobId} />
       <div className="survey-hero hero-grid">
         <div>
           <div className="survey-kicker">Field tech workspace</div>
@@ -659,6 +664,15 @@ function SurveyPanelBody({
     )
   }
 
+  if (id === 'e911') {
+    return (
+      <E911Section
+        survey={survey}
+        onChange={patch => updateSurvey(patch)}
+      />
+    )
+  }
+
   if (id === 'topology') {
     return (
       <TopologyEditor topology={survey.topology} onChange={topology => updateSurvey({ topology })} />
@@ -706,6 +720,15 @@ function panelProgress(survey, id) {
     const filled = (nodes > 0 ? 1 : 0) + (links > 0 ? 1 : 0)
     return { filled, total: 2, ratio: filled / 2 }
   }
+  if (id === 'e911') {
+    const locs = survey.e911Locations || []
+    const named = (survey.users || []).filter(u => String(u.name || '').trim())
+    const assigned = named.filter(u => u.e911LocationId).length
+    const locFilled = locs.filter(l => String(l.name || '').trim() && String(l.address || '').trim()).length
+    const filled = locFilled + assigned
+    const total = Math.max(1, locs.length + Math.max(named.length, 1))
+    return { filled, total, ratio: filled / total }
+  }
   if (id === 'photos') {
     const n = survey.photos?.length || 0
     return { filled: n, total: Math.max(1, n), ratio: n > 0 ? 1 : 0 }
@@ -714,7 +737,7 @@ function panelProgress(survey, id) {
 }
 
 function newUser() {
-  return { id: makeId(), name: '', username: '', email: '', extension: '', phone: '', location: '', role: 'User' }
+  return emptySurveyUser()
 }
 
 function Field({ label, value, onChange, type = 'text' }) {

@@ -21,7 +21,7 @@ const YES_NO = [
   { value: 'No', label: 'No' },
 ]
 
-export default function AccountCallFlow({ accountId, onBack }) {
+export default function AccountCallFlow({ accountId, onBack, embedded = false }) {
   const [account, setAccount] = useState(() => getAccount(accountId))
   const [activeRouteId, setActiveRouteId] = useState(() => getAccount(accountId)?.routes?.[0]?.id || null)
   const [copyNote, setCopyNote] = useState(null)
@@ -219,7 +219,8 @@ export default function AccountCallFlow({ accountId, onBack }) {
     : [{ id: 'placeholder', number: '', label: '' }]
 
   return (
-    <section className="account-call-flow">
+    <section className={`account-call-flow${embedded ? ' is-embedded' : ''}`}>
+      {!embedded && (
       <div className="design-hero hero-grid">
         <div>
           <div className="survey-kicker">Account call flows</div>
@@ -251,6 +252,25 @@ export default function AccountCallFlow({ accountId, onBack }) {
           </button>
         </div>
       </div>
+      )}
+
+      {embedded && (
+        <div className="account-flow-embedded-actions survey-actions">
+          <button type="button" className="btn btn-secondary" onClick={handleCopySummary}>
+            Copy summary
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={handleShareCustomer}>
+            Share with customer
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={handleExport}>
+            Export
+          </button>
+          <button type="button" className="btn btn-primary" onClick={handleSave}>
+            Save
+          </button>
+          {savedFlash ? <small className="job-updated">Saved</small> : null}
+        </div>
+      )}
 
       {copyNote && (
         <div className={copyNote.type === 'ok' ? 'parse-note parse-ok' : 'parse-note parse-error'}>

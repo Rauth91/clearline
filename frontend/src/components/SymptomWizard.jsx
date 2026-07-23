@@ -469,7 +469,7 @@ const TREE = {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function SymptomWizard() {
+export default function SymptomWizard({ renderEscalateAction } = {}) {
   const [path, setPath] = useState(['root'])
   const [done, setDone] = useState(false)
 
@@ -556,7 +556,12 @@ export default function SymptomWizard() {
           {current.escalate && (
             <div className="sw-escalate">
               <span className="sw-escalate-icon">📞</span>
-              <span>{current.escalate}</span>
+              <div className="sw-escalate-body">
+                <span>{current.escalate}</span>
+                {typeof renderEscalateAction === 'function'
+                  ? renderEscalateAction(current.escalate)
+                  : null}
+              </div>
             </div>
           )}
           <div className="sw-result-actions">

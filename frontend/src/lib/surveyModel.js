@@ -27,6 +27,7 @@ export function createEmptySurvey() {
     phoneCount: '',
     mainNumbers: [],
     users: [],
+    e911Locations: [],
     speedtests: emptySpeedtestRuns(),
     visualwareRuns: emptyVisualwareRuns(),
     speedtest: { ...EMPTY_SPEEDTEST },
@@ -34,6 +35,29 @@ export function createEmptySurvey() {
     photos: [],
     topology: defaultTopology(),
   })
+}
+
+export function emptyE911Location(patch = {}) {
+  return {
+    id: patch.id || makeId(),
+    name: patch.name || '',
+    address: patch.address || '',
+    notes: patch.notes || '',
+  }
+}
+
+export function emptySurveyUser(patch = {}) {
+  return {
+    id: patch.id || makeId(),
+    name: patch.name || '',
+    username: patch.username || '',
+    email: patch.email || '',
+    extension: patch.extension || '',
+    phone: patch.phone || '',
+    location: patch.location || '',
+    role: patch.role || 'User',
+    e911LocationId: patch.e911LocationId || '',
+  }
 }
 
 export function defaultTopology() {
@@ -62,7 +86,15 @@ export function newTopologyNode(type, patch = {}) {
 }
 
 export function makeId() {
-  return crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  // UUID v4 fallback for older runtimes
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
 }
 
 export function loadDraft() {

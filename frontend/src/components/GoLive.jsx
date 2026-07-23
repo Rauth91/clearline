@@ -18,6 +18,7 @@ import {
   loadJobSurvey,
   saveJobGoLive,
 } from '../lib/jobModel.js'
+import { ConflictBanner } from './ConflictReview.jsx'
 
 const PANELS = [
   ['cutover', 'Cutover', 'Port date, window, sequence, rollback, and customer comms'],
@@ -30,6 +31,8 @@ export default function GoLive({ jobId }) {
   const [golive, setGolive] = useState(() => mergeGoLive(loadJobGoLive(jobId)))
   const [activePanel, setActivePanel] = useState(null)
   const [exportingPdf, setExportingPdf] = useState(false)
+  const [showE911Test, setShowE911Test] = useState(false)
+  const [e911Form, setE911Form] = useState({ testedBy: '', method: 'test-call' })
 
   const job = getJob(jobId)
   const [surveyTick, setSurveyTick] = useState(0)
@@ -37,6 +40,15 @@ export default function GoLive({ jobId }) {
   const design = useMemo(() => loadJobDesign(jobId), [jobId, surveyTick])
   const pipeline = jobCompletion(jobId)
   const provision = useMemo(() => buildProvisionData(survey, design), [survey, design])
+
+  const e911Ready = useMemo(() => {
+    const locs = survey?.e911Locations || []
+    const named = (survey?.users || []).filter(u => String(u.name || '').trim())
+    if (!locs.length) return false
+    const locsOk = locs.every(l => String(l.name || '').trim() && String(l.address || '').trim())
+    const assignOk = named.every(u => u.e911LocationId)
+    return locsOk && (named.length === 0 || assignOk)
+  }, [survey])
 
   useEffect(() => {
     setGolive(mergeGoLive(loadJobGoLive(jobId)))
@@ -115,16 +127,63 @@ export default function GoLive({ jobId }) {
     setGolive(prev => ({ ...prev, handoff: { ...prev.handoff, [field]: value } }))
   }
 
+  function itemGated(item) {
+    if (!item.gated) return false
+    if (item.id === 'e911-test') return !e911Ready || !golive.e911Test?.testedAt
+    if (item.id === 'e911' || item.id === 'e911-locs') return !e911Ready
+    return false
+  }
+
   function toggleInstall(id) {
+    const item = (golive.install.items || []).find(i => i.id === id)
+    if (item && itemGated(item) && !item.done) {
+      if (id === 'e911-test' && e911Ready) {
+        setE911Form({
+          testedBy: golive.e911Test?.testedBy || '',
+          method: golive.e911Test?.method || 'test-call',
+        })
+        setShowE911Test(true)
+      }
+      return
+    }
     setGolive(prev => ({
       ...prev,
       install: {
         ...prev.install,
-        items: (prev.install.items || []).map(item => (
-          item.id === id ? { ...item, done: !item.done } : item
+        items: (prev.install.items || []).map(row => (
+          row.id === id
+            ? {
+              ...row,
+              done: !row.done,
+              doneAt: !row.done ? new Date().toISOString() : null,
+              doneBy: !row.done ? (row.doneBy || '') : '',
+            }
+            : row
         )),
       },
     }))
+  }
+
+  function confirmE911Test(e) {
+    e?.preventDefault()
+    const testedAt = new Date().toISOString()
+    setGolive(prev => ({
+      ...prev,
+      e911Test: {
+        testedAt,
+        testedBy: e911Form.testedBy.trim(),
+        method: e911Form.method || 'test-call',
+      },
+      install: {
+        ...prev.install,
+        items: (prev.install.items || []).map(row => (
+          row.id === 'e911-test'
+            ? { ...row, done: true, doneAt: testedAt, doneBy: e911Form.testedBy.trim() }
+            : row
+        )),
+      },
+    }))
+    setShowE911Test(false)
   }
 
   function updateInstallNote(id, notes) {
@@ -159,6 +218,7 @@ export default function GoLive({ jobId }) {
 
   return (
     <section className="go-live">
+      <ConflictBanner jobId={jobId} />
       <div className="design-hero hero-grid">
         <div>
           <div className="survey-kicker">Go-Live</div>
@@ -278,19 +338,58 @@ export default function GoLive({ jobId }) {
 
               {activePanel === 'install' && (
                 <div className="install-checklist">
-                  {(golive.install.items || []).map(item => (
-                    <div className="install-row" key={item.id}>
-                      <label className="install-check">
-                        <input type="checkbox" checked={Boolean(item.done)} onChange={() => toggleInstall(item.id)} />
-                        <span>{item.label}</span>
-                      </label>
-                      <input
-                        value={item.notes || ''}
-                        onChange={e => updateInstallNote(item.id, e.target.value)}
-                        placeholder="Notes"
-                      />
+                  {!e911Ready && (
+                    <div className="parse-note parse-error">
+                      Complete E911 locations and user assignments in Survey before checking gated E911 items.
                     </div>
-                  ))}
+                  )}
+                  {golive.e911Test?.testedAt && (
+                    <div className="parse-note parse-ok">
+                      E911 tested {new Date(golive.e911Test.testedAt).toLocaleString()}
+                      {golive.e911Test.testedBy ? ` by ${golive.e911Test.testedBy}` : ''}
+                      {golive.e911Test.method ? ` · ${golive.e911Test.method}` : ''}
+                    </div>
+                  )}
+                  {(golive.install.items || []).map(item => {
+                    const gated = itemGated(item) && !item.done
+                    return (
+                      <div className={`install-row${gated ? ' is-gated' : ''}`} key={item.id}>
+                        <label className="install-check">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(item.done)}
+                            disabled={gated && item.id !== 'e911-test'}
+                            onChange={() => toggleInstall(item.id)}
+                          />
+                          <span>
+                            {item.label}
+                            {item.gated ? <em className="gated-tag"> gated</em> : null}
+                          </span>
+                        </label>
+                        {item.id === 'e911-test' && !item.done && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            disabled={!e911Ready}
+                            onClick={() => {
+                              setE911Form({
+                                testedBy: golive.e911Test?.testedBy || '',
+                                method: golive.e911Test?.method || 'test-call',
+                              })
+                              setShowE911Test(true)
+                            }}
+                          >
+                            Log 911 test
+                          </button>
+                        )}
+                        <input
+                          value={item.notes || ''}
+                          onChange={e => updateInstallNote(item.id, e.target.value)}
+                          placeholder="Notes"
+                        />
+                      </div>
+                    )
+                  })}
                   <label className="survey-field full" style={{ marginTop: 12 }}>
                     Install notes
                     <textarea
@@ -308,25 +407,81 @@ export default function GoLive({ jobId }) {
 
               {activePanel === 'handoff' && (
                 <div className="design-fields">
+                  <div className="btn-row span-2 no-print">
+                    <button type="button" className="btn btn-secondary" onClick={() => window.print()}>
+                      Print / Save as PDF
+                    </button>
+                  </div>
                   <label>
-                    <span>Training completed</span>
-                    <select value={golive.handoff.trainingDone || ''} onChange={e => updateHandoff('trainingDone', e.target.value)}>
+                    <span>Training done</span>
+                    <select value={golive.handoff.trainingDone} onChange={e => updateHandoff('trainingDone', e.target.value)}>
                       <option value="">—</option>
-                      <option>No</option>
-                      <option>Yes</option>
-                      <option>Partial</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                      <option value="Partial">Partial</option>
                     </select>
                   </label>
                   <label><span>Admin name</span><input value={golive.handoff.adminName} onChange={e => updateHandoff('adminName', e.target.value)} /></label>
                   <label><span>Admin phone</span><input value={golive.handoff.adminPhone} onChange={e => updateHandoff('adminPhone', e.target.value)} /></label>
                   <label><span>Admin email</span><input value={golive.handoff.adminEmail} onChange={e => updateHandoff('adminEmail', e.target.value)} /></label>
-                  <label className="span-2"><span>Support escalation</span><textarea value={golive.handoff.supportEscalation} onChange={e => updateHandoff('supportEscalation', e.target.value)} placeholder="Tier 1 / Tier 2 / vendor NOC..." /></label>
+                  <label className="span-2"><span>Support escalation</span><textarea value={golive.handoff.supportEscalation} onChange={e => updateHandoff('supportEscalation', e.target.value)} /></label>
                   <label><span>Sign-off name</span><input value={golive.handoff.signOffName} onChange={e => updateHandoff('signOffName', e.target.value)} /></label>
-                  <label><span>Sign-off date</span><input type="date" value={golive.handoff.signOffDate} onChange={e => updateHandoff('signOffDate', e.target.value)} /></label>
+                  <label><span>Sign-off date</span><input value={golive.handoff.signOffDate} onChange={e => updateHandoff('signOffDate', e.target.value)} /></label>
                   <label className="span-2"><span>Handoff notes</span><textarea value={golive.handoff.notes} onChange={e => updateHandoff('notes', e.target.value)} /></label>
-                  <label className="span-2"><span>Assumptions</span><textarea value={golive.assumptions} onChange={e => setGolive(prev => ({ ...prev, assumptions: e.target.value }))} /></label>
+                  <label className="span-2"><span>Assumptions</span><textarea value={golive.assumptions || ''} onChange={e => setGolive(prev => ({ ...prev, assumptions: e.target.value }))} /></label>
                 </div>
               )}
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {showE911Test && createPortal(
+        <div
+          className="section-modal-backdrop"
+          role="presentation"
+          onMouseDown={e => {
+            if (e.target === e.currentTarget) setShowE911Test(false)
+          }}
+        >
+          <div className="section-modal" role="dialog" aria-modal="true" aria-labelledby="e911-test-title">
+            <div className="section-modal-head">
+              <div>
+                <div className="survey-kicker">E911</div>
+                <h2 id="e911-test-title">Log 911 test</h2>
+                <p>Record who completed the emergency test and how.</p>
+              </div>
+              <button type="button" className="btn btn-secondary" onClick={() => setShowE911Test(false)}>Cancel</button>
+            </div>
+            <div className="section-modal-body">
+              <form className="new-job-form" onSubmit={confirmE911Test}>
+                <label className="field">
+                  <span>Tested by</span>
+                  <input
+                    autoFocus
+                    value={e911Form.testedBy}
+                    onChange={e => setE911Form(f => ({ ...f, testedBy: e.target.value }))}
+                    placeholder="Tech name"
+                    required
+                  />
+                </label>
+                <label className="field">
+                  <span>Method</span>
+                  <select
+                    value={e911Form.method}
+                    onChange={e => setE911Form(f => ({ ...f, method: e.target.value }))}
+                  >
+                    <option value="test-call">911 test call</option>
+                    <option value="psap-verify">PSAP verification</option>
+                    <option value="carrier-tool">Carrier portal tool</option>
+                    <option value="other">Other</option>
+                  </select>
+                </label>
+                <div className="btn-row">
+                  <button type="submit" className="btn btn-primary">Confirm test</button>
+                </div>
+              </form>
             </div>
           </div>
         </div>,

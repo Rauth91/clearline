@@ -9,7 +9,7 @@ import { useState, useMemo } from 'react'
 
 const CATEGORIES = ['All', 'Programmable Keys', 'Basic', 'LED', 'Network', 'SIP', 'Audio', 'Display', 'Security', 'Provisioning', 'Call Settings']
 
-const CODES = [
+export const YEALINK_CODES = [
   // ── PROGRAMMABLE KEYS ────────────────────────────────────────────────────
   {
     id: 'pk-intercom',
@@ -1098,7 +1098,7 @@ export default function YealinkCodes() {
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim()
-    return CODES.filter(item => {
+    return YEALINK_CODES.filter(item => {
       const matchCat = activeCategory === 'All' || item.category === activeCategory
       if (!matchCat) return false
       if (!q) return true
@@ -1150,7 +1150,7 @@ export default function YealinkCodes() {
         </div>
       )}
 
-      <div className="yk-count">{filtered.length} of {CODES.length} codes shown</div>
+      <div className="yk-count">{filtered.length} of {YEALINK_CODES.length} codes shown</div>
     </section>
   )
 }

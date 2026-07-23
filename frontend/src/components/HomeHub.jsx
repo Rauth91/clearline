@@ -1,139 +1,134 @@
 /**
- * HomeHub — ClearLine dashboard home
+ * HomeHub — My day: assigned jobs + hub shortcuts
  */
 
 import { useMemo } from 'react'
 import { listJobs } from '../lib/jobModel.js'
-import { listAccounts } from '../lib/accountModel.js'
+import { navigate } from '../lib/router.js'
 
-const TOOLS = [
-  { id: 'calldiag',   label: 'Call Diagnostic',       desc: 'Parse NetSapiens call logs into SIP ladder diagrams and plain-English summaries.' },
-  { id: 'yealink',   label: 'Yealink Code Generator', desc: 'Search and generate phone config codes with live variable substitution.' },
-  { id: 'symptom',   label: 'Symptom Wizard',         desc: 'Step-by-step troubleshooting for calls not ringing, dropping, or audio issues.' },
-  { id: 'ports',     label: 'Port Checklist',         desc: 'Required SIP and RTP ports by platform — NetSapiens, Meta, Zultys, Algo.' },
-  { id: 'algo',      label: 'Algo Config Builder',    desc: 'Generate SIP registration and multicast config for Algo paging units.' },
-  { id: 'quickcard', label: 'Quick Card Generator',   desc: 'Build and print a phone reference card for end users at go-live.' },
-  { id: 'codec',     label: 'Codec & QoS Reference',  desc: 'Codec bandwidth specs, DSCP values, QoS tips, and SIP response codes.' },
+const QUICK_LINKS = [
+  {
+    path: '/tools/reference',
+    label: 'Reference hub',
+    desc: 'Yealink + codecs + SIP codes search',
+  },
+  {
+    path: '/tools/troubleshoot',
+    label: 'Troubleshoot hub',
+    desc: 'Symptom Wizard + Call Diagnostic',
+  },
+  {
+    path: '/tools/config',
+    label: 'Config hub',
+    desc: 'Algo Config, Port Checklist, Quick Card',
+  },
 ]
 
-export default function HomeHub({ onOpenJob, onOpenAccount, onOpenTool, refreshKey }) {
-  const jobs = useMemo(() => {
-    try { return listJobs().slice(0, 4) } catch { return [] }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshKey])
+function jobSortKey(job) {
+  return job.cutover_date || job.foc_date || job.updatedAt || ''
+}
 
-  const accounts = useMemo(() => {
-    try { return listAccounts().slice(0, 4) } catch { return [] }
+function formatJobDate(job) {
+  const raw = job.cutover_date || job.foc_date
+  if (!raw) return 'No date'
+  try {
+    return new Date(`${raw}T12:00:00`).toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+    })
+  } catch {
+    return raw
+  }
+}
+
+const STAGE_LABELS = {
+  survey: 'Survey',
+  design: 'Design',
+  golive: 'Go-Live',
+}
+
+export default function HomeHub({ profileId, refreshKey }) {
+  const jobs = useMemo(() => {
+    try {
+      let list = listJobs()
+      if (profileId) {
+        const mine = list.filter(j => j.assigned_to === profileId)
+        list = mine.length ? mine : list
+      }
+      return [...list].sort((a, b) => String(jobSortKey(a)).localeCompare(String(jobSortKey(b))))
+    } catch {
+      return []
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshKey])
+  }, [refreshKey, profileId])
 
   return (
-    <div className="home-root">
-
-      {/* ── Top panels: Jobs + Accounts ──────────────────────────────────── */}
-      <div className="home-panels">
-
-        <div className="home-panel">
-          <div className="home-panel-head">
-            <div className="home-panel-title">Jobs</div>
-            <div className="home-panel-desc">Field installs — site survey, system design, go-live</div>
-          </div>
-          <div className="home-panel-actions">
-            <button
-              type="button"
-              className="home-cta-btn"
-              onClick={() => onOpenJob(null, 'new')}
-            >
-              New Job
-            </button>
-            <button
-              type="button"
-              className="home-secondary-btn"
-              onClick={() => onOpenJob(null, 'list')}
-            >
-              All Jobs
-            </button>
-          </div>
-          {jobs.length > 0 && (
-            <div className="home-recents">
-              <div className="home-recents-label">Recent</div>
-              {jobs.map(j => (
-                <button
-                  key={j.id}
-                  type="button"
-                  className="home-recent-row"
-                  onClick={() => onOpenJob(j.id)}
-                >
-                  <span className="home-recent-name">{j.customer || 'Unnamed job'}</span>
-                  {j.site && <span className="home-recent-site">{j.site}</span>}
-                </button>
-              ))}
-            </div>
-          )}
+    <div className="my-day">
+      <header className="my-day-header">
+        <div>
+          <div className="survey-kicker">Home</div>
+          <h1>My day</h1>
+          <p>Jobs on your plate, sorted by cutover and FOC.</p>
         </div>
+        <button type="button" className="btn btn-secondary" onClick={() => navigate('/jobs')}>
+          All jobs
+        </button>
+      </header>
 
-        <div className="home-panel">
-          <div className="home-panel-head">
-            <div className="home-panel-title">Accounts</div>
-            <div className="home-panel-desc">Call flow charts and account-level documentation</div>
-          </div>
-          <div className="home-panel-actions">
+      <section className="my-day-jobs" aria-label="Jobs on your plate">
+        {jobs.length === 0 ? (
+          <div className="empty-hint-action my-day-jobs-empty">
+            <p>No jobs on your plate yet.</p>
             <button
               type="button"
-              className="home-cta-btn"
-              onClick={() => onOpenAccount(null, 'new')}
+              className="btn btn-primary"
+              onClick={() => navigate('/jobs', { query: { new: '1' } })}
             >
-              New Account
-            </button>
-            <button
-              type="button"
-              className="home-secondary-btn"
-              onClick={() => onOpenAccount(null, 'list')}
-            >
-              All Accounts
+              New job
             </button>
           </div>
-          {accounts.length > 0 && (
-            <div className="home-recents">
-              <div className="home-recents-label">Recent</div>
-              {accounts.map(a => (
-                <button
-                  key={a.id}
-                  type="button"
-                  className="home-recent-row"
-                  onClick={() => onOpenAccount(a.id)}
-                >
-                  <span className="home-recent-name">{a.name || 'Unnamed account'}</span>
-                  {a.site && <span className="home-recent-site">{a.site}</span>}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        ) : (
+          <div className="my-day-job-list">
+            {jobs.map(job => (
+              <button
+                key={job.id}
+                type="button"
+                className="my-day-job-card"
+                onClick={() => navigate(`/job/${job.id}`)}
+              >
+                <div className="my-day-job-main">
+                  <strong>{job.customer || 'Untitled customer'}</strong>
+                  <span>{job.site || 'Site TBD'}</span>
+                </div>
+                <div className="my-day-job-meta">
+                  <span className="job-stage-badge">{STAGE_LABELS[job.stage] || job.stage || 'Survey'}</span>
+                  <span className="my-day-job-date">{formatJobDate(job)}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
 
-      </div>
-
-      {/* ── Tools grid ────────────────────────────────────────────────────── */}
-      <div className="home-tools-section">
-        <div className="home-tools-heading">
-          <span className="home-tools-title">Tools</span>
-          <span className="home-tools-desc">Diagnostics, references, and config generators</span>
+      <section className="my-day-quick" aria-label="Tool hubs">
+        <div className="my-day-quick-heading">
+          <span className="survey-kicker">Shortcuts</span>
+          <h2>Tools</h2>
         </div>
-        <div className="home-tools-grid">
-          {TOOLS.map(tool => (
+        <div className="my-day-quick-grid my-day-quick-grid-3">
+          {QUICK_LINKS.map(link => (
             <button
-              key={tool.id}
+              key={link.path}
               type="button"
-              className="home-tool-card"
-              onClick={() => onOpenTool(tool.id)}
+              className="my-day-quick-card"
+              onClick={() => navigate(link.path)}
             >
-              <div className="home-tool-name">{tool.label}</div>
-              <div className="home-tool-desc">{tool.desc}</div>
+              <strong>{link.label}</strong>
+              <span>{link.desc}</span>
             </button>
           ))}
         </div>
-      </div>
-
+      </section>
     </div>
   )
 }

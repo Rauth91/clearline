@@ -1,95 +1,58 @@
 /**
- * IndexedDB photo blobs — keeps large data URLs out of localStorage.
+ * IndexedDB photo blobs — clearline photos store (bundle per job).
  */
 
-const DB_NAME = 'clearline-photos'
-const DB_VERSION = 1
-const STORE = 'job-photos'
+import {
+  idbClear,
+  idbDelete,
+  idbGet,
+  idbPut,
+  migrateLegacyPhotoDb,
+} from './db.js'
 
-function openDb() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION)
-    req.onupgradeneeded = () => {
-      const db = req.result
-      if (!db.objectStoreNames.contains(STORE)) {
-        db.createObjectStore(STORE, { keyPath: 'jobId' })
-      }
-    }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error || new Error('IndexedDB open failed'))
-  })
+let legacyMigratePromise = null
+
+async function ensurePhotosReady() {
+  if (!legacyMigratePromise) {
+    legacyMigratePromise = migrateLegacyPhotoDb().catch((err) => {
+      console.error(err)
+      legacyMigratePromise = null
+    })
+  }
+  await legacyMigratePromise
 }
 
 export async function putJobPhotos(jobId, photos) {
   if (!jobId) return
-  const db = await openDb()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite')
-    tx.objectStore(STORE).put({
-      jobId,
-      photos: Array.isArray(photos) ? photos : [],
-      updatedAt: new Date().toISOString(),
-    })
-    tx.oncomplete = () => {
-      db.close()
-      resolve(true)
-    }
-    tx.onerror = () => {
-      db.close()
-      reject(tx.error || new Error('Photo save failed'))
-    }
+  await ensurePhotosReady()
+  await idbPut('photos', {
+    id: jobId,
+    jobId,
+    photos: Array.isArray(photos) ? photos : [],
+    isBundle: true,
+    updatedAt: new Date().toISOString(),
   })
+  return true
 }
 
 export async function getJobPhotos(jobId) {
   if (!jobId) return []
-  const db = await openDb()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readonly')
-    const req = tx.objectStore(STORE).get(jobId)
-    req.onsuccess = () => {
-      db.close()
-      const row = req.result
-      resolve(Array.isArray(row?.photos) ? row.photos : [])
-    }
-    req.onerror = () => {
-      db.close()
-      reject(req.error || new Error('Photo load failed'))
-    }
-  })
+  await ensurePhotosReady()
+  const row = await idbGet('photos', jobId)
+  return Array.isArray(row?.photos) ? row.photos : []
 }
 
 export async function deleteJobPhotos(jobId) {
   if (!jobId) return
-  const db = await openDb()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite')
-    tx.objectStore(STORE).delete(jobId)
-    tx.oncomplete = () => {
-      db.close()
-      resolve(true)
-    }
-    tx.onerror = () => {
-      db.close()
-      reject(tx.error || new Error('Photo delete failed'))
-    }
-  })
+  await ensurePhotosReady()
+  await idbDelete('photos', jobId)
+  return true
 }
 
 export async function clearAllJobPhotos() {
-  const db = await openDb()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite')
-    tx.objectStore(STORE).clear()
-    tx.oncomplete = () => {
-      db.close()
-      resolve(true)
-    }
-    tx.onerror = () => {
-      db.close()
-      reject(tx.error || new Error('Photo clear failed'))
-    }
-  })
+  await ensurePhotosReady()
+  await idbClear('photos')
+  return true
 }
 
 export function stripPhotoDataUrls(photos) {

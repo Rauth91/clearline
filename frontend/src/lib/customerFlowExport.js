@@ -106,12 +106,14 @@ function routeSectionHtml(route, index) {
   `
 }
 
-export function buildCustomerFlowHtml(account) {
+export function buildCustomerFlowHtml(account, options = {}) {
   const routes = normalizeAccountRoutes(account)
   const name = account.name || 'Customer'
   const site = account.site || ''
   const date = new Date().toLocaleDateString()
   const routeBlocks = routes.map((r, i) => routeSectionHtml(r, i)).join('\n')
+  const survey = options.survey || null
+  const e911Block = buildE911SectionHtml(survey)
 
   // Extra blank rows for numbers not already listed
   const extraRows = Array.from({ length: 4 }, () => `
@@ -238,6 +240,8 @@ export function buildCustomerFlowHtml(account) {
 
   ${routeBlocks}
 
+  ${e911Block}
+
   <section class="route">
     <h2>More numbers / other changes</h2>
     <p class="muted">Use these blank rows for numbers not listed above, or extra requests.</p>
@@ -264,11 +268,54 @@ export function buildCustomerFlowHtml(account) {
 </html>`
 }
 
-export function exportCustomerFlowReview(account) {
-  const html = buildCustomerFlowHtml(account)
+function buildE911SectionHtml(survey) {
+  if (!survey) return ''
+  const locations = survey.e911Locations || []
+  const users = (survey.users || []).filter(u => String(u.name || u.phone || u.extension || '').trim())
+  if (!locations.length && !users.length) return ''
+
+  const locById = Object.fromEntries(locations.map(l => [l.id, l]))
+  const rows = users.map(u => {
+    const loc = locById[u.e911LocationId]
+    const device = [u.name, u.extension && `ext ${u.extension}`, u.phone].filter(Boolean).join(' · ')
+    const locLabel = loc
+      ? `${loc.name || 'Location'}${loc.address ? ` — ${loc.address}` : ''}`
+      : 'Unassigned'
+    return `<tr><td>${esc(device || '—')}</td><td>${esc(locLabel)}</td></tr>`
+  }).join('')
+
+  const locList = locations.map(l => `
+    <tr>
+      <td>${esc(l.name || 'Untitled')}</td>
+      <td>${esc(l.address || '—')}</td>
+      <td>${esc(l.notes || '')}</td>
+    </tr>
+  `).join('')
+
+  return `
+    <section class="route">
+      <h2>E911 locations</h2>
+      <p class="muted">Device → emergency address mapping for this site.</p>
+      <h3>Locations</h3>
+      <table>
+        <thead><tr><th>Name</th><th>Address</th><th>Notes</th></tr></thead>
+        <tbody>${locList || '<tr><td colspan="3" class="muted">None listed</td></tr>'}</tbody>
+      </table>
+      <h3>Device → location</h3>
+      <table>
+        <thead><tr><th>Device / user</th><th>E911 location</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="2" class="muted">No users</td></tr>'}</tbody>
+      </table>
+    </section>
+  `
+}
+
+export function exportCustomerFlowReview(account, options = {}) {
+  const html = buildCustomerFlowHtml(account, options)
   const base = (account.name || account.site || 'customer')
     .replace(/\W+/g, '_')
     .replace(/^_|_$/g, '')
     .toLowerCase() || 'customer'
   downloadHtml(html, `${base}-call-routing-review-${new Date().toISOString().slice(0, 10)}.html`)
 }
+

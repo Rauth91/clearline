@@ -25,11 +25,13 @@ function esc(value) {
 }
 
 const DEFAULT_INSTALL_ITEMS = [
-  { id: 'vlan', label: 'Voice VLAN confirmed', done: false, notes: '' },
-  { id: 'phones', label: 'Phones staged / labeled', done: false, notes: '' },
-  { id: 'program', label: 'PBX programming spot-checked', done: false, notes: '' },
-  { id: 'e911', label: 'E911 address verified', done: false, notes: '' },
-  { id: 'smoke', label: 'Inbound / outbound smoke tests passed', done: false, notes: '' },
+  { id: 'vlan', label: 'Voice VLAN confirmed', done: false, notes: '', doneAt: null, doneBy: '', gated: false },
+  { id: 'phones', label: 'Phones staged / labeled', done: false, notes: '', doneAt: null, doneBy: '', gated: false },
+  { id: 'program', label: 'PBX programming spot-checked', done: false, notes: '', doneAt: null, doneBy: '', gated: false },
+  { id: 'e911-locs', label: 'E911 locations verified in carrier portal', done: false, notes: '', doneAt: null, doneBy: '', gated: true },
+  { id: 'e911', label: 'E911 address verified', done: false, notes: '', doneAt: null, doneBy: '', gated: true },
+  { id: 'e911-test', label: '911 test call completed', done: false, notes: '', doneAt: null, doneBy: '', gated: true },
+  { id: 'smoke', label: 'Inbound / outbound smoke tests passed', done: false, notes: '', doneAt: null, doneBy: '', gated: false },
 ]
 
 const REMOVED_INSTALL_IDS = new Set(['qos', 'poe', 'mdf'])
@@ -58,6 +60,7 @@ export function createEmptyGoLive() {
       signOffDate: '',
       notes: '',
     },
+    e911Test: null,
     assumptions: '',
   }
 }
@@ -68,20 +71,44 @@ export function mergeGoLive(saved) {
   const rawItems = Array.isArray(saved.install?.items) && saved.install.items.length
     ? saved.install.items.filter(i => !REMOVED_INSTALL_IDS.has(i.id))
     : empty.install.items
-  // Keep known defaults in order; drop removed legacy rows
   const byId = Object.fromEntries(rawItems.map(i => [i.id, i]))
   const items = DEFAULT_INSTALL_ITEMS.map(def => ({
     ...def,
     ...(byId[def.id] || {}),
     id: def.id,
     label: def.label,
+    gated: def.gated,
+    doneAt: byId[def.id]?.doneAt ?? def.doneAt ?? null,
+    doneBy: byId[def.id]?.doneBy ?? def.doneBy ?? '',
   }))
+  // Preserve any custom items not in defaults
+  for (const item of rawItems) {
+    if (!DEFAULT_INSTALL_ITEMS.some(d => d.id === item.id)) {
+      items.push({
+        done: false,
+        notes: '',
+        doneAt: null,
+        doneBy: '',
+        gated: false,
+        ...item,
+      })
+    }
+  }
+  let e911Test = null
+  if (saved.e911Test && typeof saved.e911Test === 'object') {
+    e911Test = {
+      testedAt: saved.e911Test.testedAt || null,
+      testedBy: saved.e911Test.testedBy || '',
+      method: saved.e911Test.method || '',
+    }
+  }
   return {
     ...empty,
     ...saved,
     cutover: { ...empty.cutover, ...saved.cutover },
     install: { ...empty.install, ...saved.install, items },
     handoff: { ...empty.handoff, ...saved.handoff },
+    e911Test,
   }
 }
 

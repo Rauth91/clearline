@@ -5,7 +5,7 @@
 
 import { useState } from 'react'
 
-const PLATFORMS = [
+export const PORT_PLATFORM_CHECKLISTS = [
   {
     id: 'netsapiens',
     label: 'NetSapiens',
@@ -195,7 +195,7 @@ export default function PortChecklist() {
   const [activePlatform, setActivePlatform] = useState('netsapiens')
   const [checked, setChecked] = useState({})
 
-  const platform = PLATFORMS.find(p => p.id === activePlatform)
+  const platform = PORT_PLATFORM_CHECKLISTS.find(p => p.id === activePlatform)
 
   function toggle(key) {
     setChecked(prev => ({ ...prev, [key]: !prev[key] }))
@@ -217,7 +217,7 @@ export default function PortChecklist() {
       </div>
 
       <div className="pc-platform-tabs">
-        {PLATFORMS.map(p => (
+        {PORT_PLATFORM_CHECKLISTS.map(p => (
           <button
             key={p.id}
             type="button"

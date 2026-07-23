@@ -67,6 +67,11 @@ export default function ProvisioningSheet({ survey, design }) {
 
   return (
     <div className="provision-sheet">
+      <div className="btn-row no-print" style={{ marginBottom: 12 }}>
+        <button type="button" className="btn btn-secondary" onClick={() => window.print()}>
+          Print / Save as PDF
+        </button>
+      </div>
       <div className="provision-block">
         <h3>Main numbers</h3>
         <div className="design-table">

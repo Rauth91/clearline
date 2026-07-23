@@ -153,8 +153,27 @@ export function normalizeNetworkSurvey(survey = {}) {
 
   const speedtest = aggregateSpeedtests(speedtests)
   const visualware = aggregateVisualwareRuns(visualwareRuns)
+
+  const e911Locations = Array.isArray(survey.e911Locations)
+    ? survey.e911Locations.map(loc => ({
+      id: loc.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `e911-${Date.now()}`),
+      name: loc.name || '',
+      address: loc.address || '',
+      notes: loc.notes || '',
+    }))
+    : []
+
+  const users = Array.isArray(survey.users)
+    ? survey.users.map(u => ({
+      ...u,
+      e911LocationId: u.e911LocationId || '',
+    }))
+    : []
+
   return {
     ...survey,
+    users,
+    e911Locations,
     speedtests,
     visualwareRuns,
     speedtest,
@@ -429,3 +448,81 @@ export function analyzeReadiness(input = {}) {
     },
   }
 }
+
+/**
+ * Compact network verdict for cockpit chips.
+ * callsSupported = floor(min(up,down)*1000*0.8/87.2)
+ *
+ * @param {{ upMbps?: number|string, downMbps?: number|string, loss?: number|string, jitter?: number|string, mos?: number|string, rttMs?: number|string, sipAlg?: string }} aggregates
+ * @param {number} seatCount
+ */
+export function computeVerdict(aggregates = {}, seatCount = 1) {
+  const seats = Math.max(1, Number(seatCount) || 1)
+  const up = toNumber(aggregates.upMbps ?? aggregates.up)
+  const down = toNumber(aggregates.downMbps ?? aggregates.down)
+  const loss = toNumber(aggregates.loss ?? aggregates.packetLoss)
+  const jitter = toNumber(aggregates.jitter)
+  const mos = toNumber(aggregates.mos)
+  const rtt = toNumber(aggregates.rttMs ?? aggregates.rtt)
+  const sipAlg = String(aggregates.sipAlg || '').toLowerCase()
+
+  let callsSupported = null
+  if (up != null && down != null) {
+    const minBw = Math.min(up, down)
+    callsSupported = Math.floor((minBw * 1000 * 0.8) / 87.2)
+  }
+
+  const reasons = []
+  let status = 'pass'
+
+  const fail = (msg) => {
+    status = 'fail'
+    reasons.push(msg)
+  }
+  const warn = (msg) => {
+    if (status !== 'fail') status = 'warn'
+    reasons.push(msg)
+  }
+
+  if (loss != null && loss > 1) fail(`Packet loss ${loss}% exceeds 1%`)
+  if (jitter != null && jitter > 30) fail(`Jitter ${jitter} ms exceeds 30 ms`)
+  if (mos != null && mos < 3.5) fail(`MOS ${mos} below 3.5`)
+  if (sipAlg === 'detected' || sipAlg === 'present' || sipAlg === 'interference') {
+    fail('SIP ALG detected')
+  }
+  if (callsSupported != null && callsSupported < seats) {
+    fail(`Supports ${callsSupported} calls but need ${seats} seats`)
+  }
+
+  if (status !== 'fail') {
+    if (jitter != null && jitter > 20) warn(`Jitter ${jitter} ms above 20 ms`)
+    if (rtt != null && rtt > 150) warn(`RTT ${rtt} ms above 150 ms`)
+    if (mos != null && mos < 4) warn(`MOS ${mos} below 4.0`)
+    if (callsSupported != null && callsSupported < seats * 1.5) {
+      warn(`Headroom thin: ${callsSupported} calls vs ${seats} seats (want ≥${Math.ceil(seats * 1.5)})`)
+    }
+  }
+
+  if (!reasons.length) {
+    reasons.push(callsSupported != null
+      ? `Network supports ~${callsSupported} concurrent calls for ${seats} seats`
+      : 'Metrics within VoIP targets')
+  }
+
+  return {
+    status,
+    callsSupported,
+    callsNeeded: seats,
+    reasons,
+    summary: {
+      upMbps: up,
+      downMbps: down,
+      loss,
+      jitter,
+      mos,
+      rttMs: rtt,
+      sipAlg: aggregates.sipAlg || '',
+    },
+  }
+}
+
