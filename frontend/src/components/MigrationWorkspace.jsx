@@ -95,6 +95,8 @@ function emptyMigration() {
     extDigits:'4', line2:true,
     users:[], devices:[],
     autoAttendants:[], callFlows:[], huntGroups:[], buttonLayouts:[],
+    // autoAttendants[]: { id, name, scheduleNotes, timeoutType, timeoutDest, menuKeys:[{id,digit,destType,destValue}] }
+    // buttonLayouts[]:  { id, extension, keyRows:[{id,type,value,label}], sidecarNotes, notes }
     build:{},
   }
 }
@@ -126,6 +128,156 @@ function MSelect({ value, onChange, options }) {
     <select className="mns-input" value={value} onChange={e=>onChange(e.target.value)}>
       {options.map(o=><option key={o.value??o} value={o.value??o}>{o.label??o}</option>)}
     </select>
+  )
+}
+
+/* ── Button Layout paged key builder ─────────────────────── */
+const KEY_TYPES = [
+  { value:'line',      label:'Line'        },
+  { value:'blf',       label:'BLF'         },
+  { value:'speeddial', label:'Speed Dial'  },
+  { value:'callpark',  label:'Call Park'   },
+  { value:'intercom',  label:'Intercom'    },
+  { value:'dtmf',      label:'DTMF'        },
+  { value:'empty',     label:'Empty'       },
+]
+const KEY_VALUE_HINT = { line:'Extension', blf:'Extension to monitor', speeddial:'Phone number', callpark:'Park orbit (optional)', intercom:'Extension', dtmf:'Digits', empty:'' }
+const KEY_LABEL_SHOW = new Set(['blf','speeddial'])
+
+function KeyList({ keys = [], onChange }) {
+  function addKey() { onChange([...keys, { id:makeId(), type:'line', value:'', label:'' }]) }
+  function update(id, f, v) { onChange(keys.map(k => k.id===id ? {...k,[f]:v} : k)) }
+  function remove(id) { onChange(keys.filter(k => k.id!==id)) }
+  function move(idx, dir) {
+    const next = [...keys]; const swap = idx + dir
+    if (swap < 0 || swap >= next.length) return
+    ;[next[idx], next[swap]] = [next[swap], next[idx]]; onChange(next)
+  }
+  return (
+    <div className="mig-key-builder">
+      {keys.map((k, idx) => (
+        <div key={k.id} className="mig-key-row">
+          <span className="mig-key-num">{idx + 1}</span>
+          <select className="mig-key-type-sel" value={k.type} onChange={e=>update(k.id,'type',e.target.value)}>
+            {KEY_TYPES.map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+          {k.type !== 'empty' && (
+            <input className="mig-key-val-input" value={k.value} placeholder={KEY_VALUE_HINT[k.type]||'Value'}
+              onChange={e=>update(k.id,'value',e.target.value)}/>
+          )}
+          {KEY_LABEL_SHOW.has(k.type) && (
+            <input className="mig-key-label-input" value={k.label} placeholder="Label (optional)"
+              onChange={e=>update(k.id,'label',e.target.value)}/>
+          )}
+          <div className="mig-key-actions">
+            <button type="button" className="mig-key-move" onClick={()=>move(idx,-1)} disabled={idx===0}>↑</button>
+            <button type="button" className="mig-key-move" onClick={()=>move(idx,1)} disabled={idx===keys.length-1}>↓</button>
+            <button type="button" className="mig-del-btn" onClick={()=>remove(k.id)}>✕</button>
+          </div>
+        </div>
+      ))}
+      <button type="button" className="btn btn-secondary mig-key-add" onClick={addKey}>+ Add key</button>
+    </div>
+  )
+}
+
+function PagedKeyBuilder({ pages = [], onChange }) {
+  const [activeIdx, setActiveIdx] = useState(0)
+  const safeIdx = Math.min(activeIdx, pages.length - 1)
+
+  function addPage() {
+    const n = pages.length + 1
+    const label = n === 2 ? 'Sidecar' : `Page ${n}`
+    const next = [...pages, { id:makeId(), label, keys:[] }]
+    onChange(next)
+    setActiveIdx(next.length - 1)
+  }
+  function removePage(idx) {
+    if (pages.length <= 1) return
+    const next = pages.filter((_,i)=>i!==idx)
+    onChange(next)
+    setActiveIdx(Math.min(safeIdx, next.length - 1))
+  }
+  function renamePage(idx, label) {
+    onChange(pages.map((p,i)=>i===idx?{...p,label}:p))
+  }
+  function setPageKeys(idx, keys) {
+    onChange(pages.map((p,i)=>i===idx?{...p,keys}:p))
+  }
+
+  const active = pages[safeIdx]
+
+  return (
+    <div className="mig-paged-builder">
+      {/* Tab strip */}
+      <div className="mig-page-tabs">
+        {pages.map((p, i) => (
+          <div key={p.id} className={`mig-page-tab${i===safeIdx?' is-active':''}`}>
+            {i === safeIdx
+              ? <input className="mig-page-tab-input" value={p.label}
+                  onChange={e=>renamePage(i, e.target.value)}
+                  onFocus={e=>e.target.select()}/>
+              : <button type="button" className="mig-page-tab-btn" onClick={()=>setActiveIdx(i)}>{p.label}</button>
+            }
+            {pages.length > 1 && (
+              <button type="button" className="mig-page-tab-remove" onClick={()=>removePage(i)} title="Remove page">✕</button>
+            )}
+          </div>
+        ))}
+        <button type="button" className="mig-page-add-btn" onClick={addPage}>+ Page</button>
+      </div>
+
+      {/* Active page key list */}
+      {active && (
+        <div className="mig-page-body">
+          <KeyList keys={active.keys||[]} onChange={keys=>setPageKeys(safeIdx,keys)}/>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ── Auto Attendant menu key builder ─────────────────────── */
+const DIGITS = ['0','1','2','3','4','5','6','7','8','9','*','#']
+const DEST_TYPES = [
+  { value:'extension',     label:'Extension'      },
+  { value:'huntgroup',     label:'Hunt Group'     },
+  { value:'autoattendant', label:'Auto Attendant' },
+  { value:'voicemail',     label:'Voicemail'      },
+  { value:'directory',     label:'Directory'      },
+  { value:'hangup',        label:'Hang Up'        },
+]
+const DEST_NEEDS_VALUE = new Set(['extension','huntgroup','autoattendant','voicemail'])
+
+function MenuKeyBuilder({ menuKeys = [], onChange }) {
+  function addKey() {
+    const usedDigits = new Set(menuKeys.map(k=>k.digit))
+    const next = DIGITS.find(d=>!usedDigits.has(d)) || '0'
+    onChange([...menuKeys, { id:makeId(), digit:next, destType:'extension', destValue:'' }])
+  }
+  function update(id, f, v) { onChange(menuKeys.map(k => k.id===id ? {...k,[f]:v} : k)) }
+  function remove(id) { onChange(menuKeys.filter(k => k.id!==id)) }
+  return (
+    <div className="mig-key-builder">
+      {menuKeys.map(k => (
+        <div key={k.id} className="mig-key-row">
+          <span className="mig-aa-press">Press</span>
+          <select className="mig-key-digit-sel" value={k.digit} onChange={e=>update(k.id,'digit',e.target.value)}>
+            {DIGITS.map(d=><option key={d} value={d}>{d}</option>)}
+          </select>
+          <span className="mig-aa-arrow">→</span>
+          <select className="mig-key-type-sel" value={k.destType} onChange={e=>update(k.id,'destType',e.target.value)}>
+            {DEST_TYPES.map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+          {DEST_NEEDS_VALUE.has(k.destType) && (
+            <input className="mig-key-val-input" value={k.destValue} placeholder="Ext / name / number"
+              onChange={e=>update(k.id,'destValue',e.target.value)}/>
+          )}
+          <button type="button" className="mig-del-btn" onClick={()=>remove(k.id)}>✕</button>
+        </div>
+      ))}
+      <button type="button" className="btn btn-secondary mig-key-add" onClick={addKey}>+ Add key</button>
+    </div>
   )
 }
 
@@ -486,7 +638,7 @@ function StepSystem({ data, onChange }) {
     { id:'bl',  label:'Button Layouts',     count:(data.buttonLayouts||[]).length },
   ]
 
-  function addAA()        { onChange({ ...data, autoAttendants:[...(data.autoAttendants||[]),{id:makeId(),name:'',scheduleNotes:'',timeout:'',keys:''}] }) }
+  function addAA()        { onChange({ ...data, autoAttendants:[...(data.autoAttendants||[]),{id:makeId(),name:'',scheduleNotes:'',timeoutType:'voicemail',timeoutDest:'',menuKeys:[]}] }) }
   function updateAA(id,f,v) { onChange({ ...data, autoAttendants:data.autoAttendants.map(a=>a.id===id?{...a,[f]:v}:a) }) }
   function removeAA(id)   { onChange({ ...data, autoAttendants:data.autoAttendants.filter(a=>a.id!==id) }) }
 
@@ -498,7 +650,7 @@ function StepSystem({ data, onChange }) {
   function updateHG(id,f,v) { onChange({ ...data, huntGroups:data.huntGroups.map(h=>h.id===id?{...h,[f]:v}:h) }) }
   function removeHG(id)   { onChange({ ...data, huntGroups:data.huntGroups.filter(h=>h.id!==id) }) }
 
-  function addBL()        { onChange({ ...data, buttonLayouts:[...(data.buttonLayouts||[]),{id:makeId(),extension:'',keys:'',sidecarNotes:'',notes:''}] }) }
+  function addBL()        { onChange({ ...data, buttonLayouts:[...(data.buttonLayouts||[]),{id:makeId(),extension:'',pages:[{id:makeId(),label:'Page 1',keys:[]}],sidecarNotes:'',notes:''}] }) }
   function updateBL(id,f,v) { onChange({ ...data, buttonLayouts:data.buttonLayouts.map(b=>b.id===id?{...b,[f]:v}:b) }) }
   function removeBL(id)   { onChange({ ...data, buttonLayouts:data.buttonLayouts.filter(b=>b.id!==id) }) }
 
@@ -523,24 +675,31 @@ function StepSystem({ data, onChange }) {
       {/* Auto Attendants */}
       {tab === 'aa' && (
         <div className="mig-sys-panel">
-          <p className="mig-hint">Document each AA — name, schedule, timeout action, and key menu. You'll build these in NS during Step 5.</p>
+          <p className="mig-hint">Add each AA, fill in schedule notes, set the no-input timeout action, then build the key menu.</p>
           {(data.autoAttendants||[]).map(aa => (
             <div key={aa.id} className="mig-card">
               <div className="mig-card-head">
                 <input className="mig-card-title-input" value={aa.name} onChange={e=>updateAA(aa.id,'name',e.target.value)} placeholder="AA Name (e.g. Main Menu)"/>
                 <button type="button" className="mig-del-btn" onClick={()=>removeAA(aa.id)}>✕</button>
               </div>
-              <div className="mig-field-row">
-                <Field label="Schedule / hours notes">
-                  <MInput value={aa.scheduleNotes} onChange={v=>updateAA(aa.id,'scheduleNotes',v)} placeholder="M–F 8am–5pm, after-hours → VM"/>
-                </Field>
-                <Field label="Timeout action">
-                  <MInput value={aa.timeout} onChange={v=>updateAA(aa.id,'timeout',v)} placeholder="Operator ext 0 / VM"/>
-                </Field>
-              </div>
-              <Field label="Key options">
-                <textarea className="mig-textarea" rows={3} value={aa.keys} onChange={e=>updateAA(aa.id,'keys',e.target.value)}
-                  placeholder="1 → Sales hunt group&#10;2 → Support ext 1050&#10;0 → Operator ext 1000"/>
+              <Field label="Schedule / hours notes">
+                <MInput value={aa.scheduleNotes} onChange={v=>updateAA(aa.id,'scheduleNotes',v)} placeholder="M–F 8am–5pm, after-hours → VM"/>
+              </Field>
+              <Field label="No-input timeout" hint="What happens if the caller doesn't press anything">
+                <div className="mig-inline-dest">
+                  <select className="mig-key-type-sel" value={aa.timeoutType||'voicemail'} onChange={e=>updateAA(aa.id,'timeoutType',e.target.value)}>
+                    {DEST_TYPES.map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
+                  </select>
+                  {DEST_NEEDS_VALUE.has(aa.timeoutType||'voicemail') && (
+                    <input className="mig-key-val-input" value={aa.timeoutDest||''} placeholder="Ext / name / number"
+                      onChange={e=>updateAA(aa.id,'timeoutDest',e.target.value)}/>
+                  )}
+                </div>
+              </Field>
+              <Field label="Key menu">
+                <MenuKeyBuilder
+                  menuKeys={aa.menuKeys||[]}
+                  onChange={keys=>updateAA(aa.id,'menuKeys',keys)}/>
               </Field>
             </div>
           ))}
@@ -614,7 +773,7 @@ function StepSystem({ data, onChange }) {
       {/* Button Layouts */}
       {tab === 'bl' && (
         <div className="mig-sys-panel">
-          <p className="mig-hint">Document each phone's BLF/button layout so nothing gets missed during provisioning.</p>
+          <p className="mig-hint">Add a layout per phone. Use the key builder to assign each physical button — no typing required.</p>
           {(data.buttonLayouts||[]).map(bl => (
             <div key={bl.id} className="mig-card">
               <div className="mig-card-head">
@@ -622,10 +781,11 @@ function StepSystem({ data, onChange }) {
                 <button type="button" className="mig-del-btn" onClick={()=>removeBL(bl.id)}>✕</button>
               </div>
               <Field label="Key assignments">
-                <textarea className="mig-textarea" rows={4} value={bl.keys} onChange={e=>updateBL(bl.id,'keys',e.target.value)}
-                  placeholder="Key 1: Line (ext 1001)&#10;Key 2: BLF ext 1002&#10;Key 3: Speed dial 2255551000&#10;Key 4: Call Park"/>
+                <PagedKeyBuilder
+                  pages={bl.pages||[{id:makeId(),label:'Page 1',keys:[]}]}
+                  onChange={pages=>updateBL(bl.id,'pages',pages)}/>
               </Field>
-              <Field label="Sidecar / expansion module notes">
+              <Field label="Sidecar / expansion module notes" hint="e.g. EXP50 attached — 20 BLF keys">
                 <MInput value={bl.sidecarNotes} onChange={v=>updateBL(bl.id,'sidecarNotes',v)} placeholder="EXP50 attached — 20 BLF keys"/>
               </Field>
             </div>
@@ -758,7 +918,10 @@ function StepBuild({ data, onChange }) {
           {(data.autoAttendants||[]).map(aa=>(
             <CheckRow key={aa.id} bkey={`aa_${aa.id}`}
               label={`Auto Attendant: ${aa.name||'Unnamed'}`}
-              detail={[aa.scheduleNotes&&`Schedule: ${aa.scheduleNotes}`, aa.timeout&&`Timeout: ${aa.timeout}`, aa.keys&&`Keys: ${aa.keys.split('\n').filter(Boolean).join(' | ')}`].filter(Boolean).join(' · ')}/>
+              detail={[
+                aa.scheduleNotes&&`Schedule: ${aa.scheduleNotes}`,
+                (aa.menuKeys||[]).length&&`${aa.menuKeys.length} key${aa.menuKeys.length>1?'s':''}: ${aa.menuKeys.map(k=>`${k.digit}→${k.destValue||k.destType}`).join(', ')}`,
+              ].filter(Boolean).join(' · ')}/>
           ))}
           {(data.callFlows||[]).map(cf=>(
             <CheckRow key={cf.id} bkey={`cf_${cf.id}`}
@@ -770,11 +933,18 @@ function StepBuild({ data, onChange }) {
               label={`Hunt Group: ${hg.name||'Unnamed'} (${hg.type})`}
               detail={hg.members?`Members: ${hg.members}`:''}/>
           ))}
-          {(data.buttonLayouts||[]).map(bl=>(
-            <CheckRow key={bl.id} bkey={`bl_${bl.id}`}
-              label={`Phone layout: ext ${bl.extension||'—'}`}
-              detail={bl.sidecarNotes?`Sidecar: ${bl.sidecarNotes}`:''}/>
-          ))}
+          {(data.buttonLayouts||[]).map(bl=>{
+            const totalKeys = (bl.pages||[]).reduce((s,p)=>s+(p.keys||[]).length,0)
+            const pageCount = (bl.pages||[]).length
+            return (
+              <CheckRow key={bl.id} bkey={`bl_${bl.id}`}
+                label={`Phone layout: ext ${bl.extension||'—'}`}
+                detail={[
+                  totalKeys&&`${totalKeys} key${totalKeys>1?'s':''} across ${pageCount} page${pageCount>1?'s':''}`,
+                  bl.sidecarNotes&&`Sidecar: ${bl.sidecarNotes}`,
+                ].filter(Boolean).join(' · ')}/>
+            )
+          })}
         </div>
       )}
 

@@ -11382,6 +11382,225 @@ select {
   color: var(--muted);
 }
 
+/* ── Key row builder (button layouts + AA menus) ─────────── */
+.mig-key-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.mig-key-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: var(--bg1);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.mig-key-num {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  min-width: 20px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.mig-key-type-sel {
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg0);
+  color: var(--ink);
+  font-size: 12px;
+  flex-shrink: 0;
+  outline: none;
+}
+
+.mig-key-digit-sel {
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg0);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--mono);
+  width: 52px;
+  flex-shrink: 0;
+  outline: none;
+}
+
+.mig-key-val-input {
+  flex: 1;
+  min-width: 80px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg0);
+  color: var(--ink);
+  font-size: 12px;
+  outline: none;
+}
+
+.mig-key-val-input:focus { border-color: var(--accent); }
+
+.mig-key-label-input {
+  width: 120px;
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg0);
+  color: var(--ink);
+  font-size: 12px;
+  outline: none;
+}
+
+.mig-key-label-input:focus { border-color: var(--accent); }
+
+.mig-key-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.mig-key-move {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  transition: color .15s, background .15s;
+}
+.mig-key-move:hover:not(:disabled) { color: var(--ink); background: var(--bg2); }
+.mig-key-move:disabled { opacity: .3; cursor: default; }
+
+.mig-key-add { margin-top: 4px; font-size: 12px; }
+
+/* AA-specific inline elements */
+.mig-aa-press {
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.mig-aa-arrow {
+  font-size: 13px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.mig-inline-dest {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ── Paged key builder ───────────────────────────────────── */
+.mig-paged-builder {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.mig-page-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg2);
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.mig-page-tab {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 10px;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  margin-bottom: -1px;
+  transition: background .15s;
+}
+
+.mig-page-tab.is-active {
+  background: var(--bg1);
+  border-color: var(--line);
+  border-bottom-color: var(--bg1);
+}
+
+.mig-page-tab-btn {
+  background: none;
+  border: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+}
+
+.mig-page-tab.is-active .mig-page-tab-btn { color: var(--ink); }
+
+.mig-page-tab-input {
+  background: none;
+  border: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  outline: none;
+  width: 80px;
+  padding: 0;
+}
+
+.mig-page-tab-remove {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0 2px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity .15s, color .15s;
+}
+
+.mig-page-tab:hover .mig-page-tab-remove,
+.mig-page-tab.is-active .mig-page-tab-remove { opacity: 1; }
+.mig-page-tab-remove:hover { color: var(--err); }
+
+.mig-page-add-btn {
+  background: none;
+  border: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 5px;
+  white-space: nowrap;
+  margin-bottom: 1px;
+  transition: background .15s;
+}
+.mig-page-add-btn:hover { background: var(--accent-soft); }
+
+.mig-page-body {
+  padding: 12px;
+  background: var(--bg1);
+}
+
 /* ── Job Types ───────────────────────────────────────────── */
 .job-type-picker {
   display: grid;
