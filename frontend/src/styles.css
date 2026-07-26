@@ -4446,8 +4446,6 @@ a.btn {
 
 .cd-root {
   padding: 24px 20px 48px;
-  max-width: 1100px;
-  margin: 0 auto;
   width: 100%;
   box-sizing: border-box;
 }
@@ -9077,6 +9075,8 @@ a.btn {
   .app-atmosphere,
   .app-header,
   .app-nav-wrap,
+  .app-sidebar,
+  .app-topbar,
   .header-actions,
   .primary-nav,
   .jobs-switch,
@@ -9092,6 +9092,8 @@ a.btn {
 
   body,
   .app-root,
+  .app-shell,
+  .app-content,
   .app-body,
   .app-stage {
     background: #fff !important;
@@ -10424,4 +10426,301 @@ select {
   :root { --sidebar-width: 0px; }
   .app-sidebar { display: none; }
   .app-content { margin-left: 0; }
+}
+
+/* ── MetaToNs (Meta → NS Migration Tool) ────────────────── */
+.mns-root {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+}
+
+.mns-section {
+  background: var(--bg1);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 20px 22px;
+  margin-bottom: 16px;
+}
+
+.mns-step-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+
+/* File slots */
+.mns-slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.mns-slot {
+  flex: 1 1 260px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1.5px dashed var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+  position: relative;
+}
+
+.mns-slot.is-loaded {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.mns-slot.is-dragging {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.mns-slot-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.mns-slot-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.mns-slot-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mns-slot-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.mns-slot.is-loaded .mns-slot-tag {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Settings grid */
+.mns-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px 16px;
+  margin-bottom: 14px;
+}
+
+.mns-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mns-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  letter-spacing: .02em;
+}
+
+.mns-req {
+  color: var(--err);
+}
+
+.mns-input {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg0);
+  color: var(--ink);
+  font-size: 13px;
+  outline: none;
+  transition: border-color .15s;
+}
+
+.mns-input:focus {
+  border-color: var(--accent);
+  background: var(--bg1);
+}
+
+.mns-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mns-checkline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  user-select: none;
+}
+
+.mns-error {
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: rgba(220, 38, 38, .08);
+  border: 1px solid rgba(220, 38, 38, .2);
+  color: var(--err);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+/* Stats row */
+.mns-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.mns-stat {
+  flex: 1 1 100px;
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  text-align: center;
+}
+
+.mns-stat-v {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.1;
+}
+
+.mns-stat-k {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* Downloads */
+.mns-downloads {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.mns-dl-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg0);
+}
+
+.mns-dl-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.mns-dl-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.mns-dl-note {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+.mns-dl-count {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Review table */
+.mns-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.mns-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.mns-table th {
+  background: var(--bg2);
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--line);
+}
+
+.mns-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-soft);
+  vertical-align: top;
+}
+
+.mns-table tr:last-child td {
+  border-bottom: none;
+}
+
+.mns-issue {
+  color: var(--warn);
+  font-weight: 500;
+}
+
+.mns-table-more {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* Import steps */
+.mns-steps {
+  padding-left: 20px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mns-steps li {
+  font-size: 13px;
+  color: var(--ink-soft);
+  line-height: 1.5;
 }

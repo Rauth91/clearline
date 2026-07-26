@@ -67,6 +67,7 @@ const AlgoConfig = lazy(() => import('./components/AlgoConfig.jsx'))
 const QuickCard = lazy(() => import('./components/QuickCard.jsx'))
 const CodecRef = lazy(() => import('./components/CodecRef.jsx'))
 const CarrierTemplates = lazy(() => import('./components/CarrierTemplates.jsx'))
+const MetaToNs = lazy(() => import('./components/MetaToNs.jsx'))
 
 const WORKSPACES = [
   { id: 'siteSurvey', label: 'Site Survey', description: 'Field handoff and readiness', route: 'survey' },
@@ -86,6 +87,7 @@ const TOOLS = [
   { id: 'codec', label: 'Codec & QoS' },
   { id: 'router', label: 'Router Advisor' },
   { id: 'carriers', label: 'Carrier Templates' },
+  { id: 'meta2ns', label: 'Meta → NS' },
 ]
 
 const TOOL_GROUPS = [
@@ -117,6 +119,7 @@ const TOOL_LABELS = {
   quickcard: 'Quick Card',
   codec: 'Codec & QoS',
   carriers: 'Carrier Templates',
+  meta2ns: 'Meta → NS Migration',
 }
 
 export default function App() {
@@ -458,7 +461,7 @@ export default function App() {
                   </button>
                 ))}
                 <span className="sidebar-section-label">Config</span>
-                {TOOLS.filter(t => ['yealink', 'algo', 'carriers', 'ports'].includes(t.id)).map(tool => (
+                {TOOLS.filter(t => ['yealink', 'algo', 'carriers', 'ports', 'meta2ns'].includes(t.id)).map(tool => (
                   <button key={tool.id} type="button" className={`sidebar-sub-item${route.name === 'tool' && route.params.toolId === tool.id ? ' is-active' : ''}`} onClick={() => navigate(`/tools/${tool.id}`)}>
                     {tool.label}
                   </button>
@@ -577,6 +580,7 @@ export default function App() {
               {route.name === 'tool' && route.params.toolId === 'quickcard' && <QuickCard />}
               {route.name === 'tool' && route.params.toolId === 'codec' && <CodecRef />}
               {route.name === 'tool' && route.params.toolId === 'carriers' && <CarrierTemplates />}
+              {route.name === 'tool' && route.params.toolId === 'meta2ns' && <MetaToNs />}
               {route.name === 'tools-reference' && <ToolsReference tab={route.params.toolTab} />}
               {route.name === 'tools-troubleshoot' && <ToolsTroubleshoot />}
               {route.name === 'tools-config' && <ToolsConfig tab={route.params.toolTab} />}
