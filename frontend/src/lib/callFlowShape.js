@@ -21,16 +21,16 @@ export const EMPTY_AUTO_ATTENDANT = {
   enabled: '',
   greeting: '',
   menuPrompt: '',
-  option0: '',
-  option1: '',
-  option2: '',
-  option3: '',
-  option4: '',
-  option5: '',
-  option6: '',
-  option7: '',
-  option8: '',
-  option9: '',
+  option0: '', optionType0: '',
+  option1: '', optionType1: '',
+  option2: '', optionType2: '',
+  option3: '', optionType3: '',
+  option4: '', optionType4: '',
+  option5: '', optionType5: '',
+  option6: '', optionType6: '',
+  option7: '', optionType7: '',
+  option8: '', optionType8: '',
+  option9: '', optionType9: '',
   timeoutAction: '',
   invalidAction: '',
   notes: '',
@@ -277,6 +277,45 @@ export function callFlowSummary(accountOrDesign = {}) {
   }
 
   return lines.filter(line => line != null).join('\n')
+}
+
+/**
+ * Completion score for a single route: 0–100.
+ * Returns { score, total, pct, status: 'complete'|'partial'|'empty' }
+ */
+export function scoreRouteCompletion(route) {
+  const flow = mergeCallFlowPayload(route)
+  let score = 0
+
+  const hasNumbers = (flow.mainNumbers || []).some(n => String(n.number || '').trim())
+  if (hasNumbers) score += 25
+
+  if (String(flow.hours.weekdayOpen || '').trim() && String(flow.hours.weekdayClose || '').trim()) score += 20
+
+  const aa = flow.autoAttendant
+  const hasDay = aa.enabled === 'Yes'
+    ? [0,1,2,3,4,5,6,7,8,9].some(i => String(aa[`option${i}`] || '').trim())
+    : String(flow.callFlow.daytimePath || '').trim()
+  if (hasDay) score += 25
+
+  const hasNight = String(flow.nightButton.destination || '').trim() || String(flow.callFlow.afterHoursPath || '').trim()
+  if (hasNight) score += 20
+
+  if (String(flow.voicemail.needed || '').trim()) score += 10
+
+  const pct = score
+  const status = pct === 100 ? 'complete' : pct > 0 ? 'partial' : 'empty'
+  return { score: pct, total: 100, pct, status }
+}
+
+/** Completion score across all routes for an account. */
+export function scoreAccountCompletion(account) {
+  const routes = normalizeAccountRoutes(account)
+  if (!routes.length) return { pct: 0, status: 'empty' }
+  const scores = routes.map(r => scoreRouteCompletion(r).pct)
+  const pct = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+  const status = pct === 100 ? 'complete' : pct > 0 ? 'partial' : 'empty'
+  return { pct, status }
 }
 
 /** Diagram-friendly design from a route (multi-DID entry label). */

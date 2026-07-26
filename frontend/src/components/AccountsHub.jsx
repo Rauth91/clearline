@@ -12,6 +12,7 @@ import {
   setActiveAccountId,
 } from '../lib/accountModel.js'
 import { FEATURES } from '../lib/features.js'
+import { scoreAccountCompletion } from '../lib/callFlowShape.js'
 
 const EMPTY_FORM = {
   name: '',
@@ -23,7 +24,14 @@ const EMPTY_FORM = {
 
 export default function AccountsHub({ onOpenAccount, refreshKey }) {
   const [query, setQuery] = useState('')
-  const accounts = searchAccounts(query)
+  const [filter, setFilter] = useState('all') // 'all' | 'incomplete' | 'complete'
+  const allAccounts = searchAccounts(query)
+  const accounts = filter === 'all'
+    ? allAccounts
+    : allAccounts.filter(a => {
+        const { status } = scoreAccountCompletion(a)
+        return filter === 'incomplete' ? status !== 'complete' : status === 'complete'
+      })
   const importRef = useRef(null)
   const [importNote, setImportNote] = useState(null)
   const [showNew, setShowNew] = useState(false)
@@ -139,17 +147,35 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
           : ''}
       </p>
 
-      <label className="field accounts-search">
-        <span className="sr-only">Search accounts</span>
-        <input
-          type="search"
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          placeholder={FEATURES.haloIntegration
-            ? 'Search by name, site, DID, or Halo ID…'
-            : 'Search by name, site, or DID…'}
-        />
-      </label>
+      <div className="accounts-filters">
+        <label className="field accounts-search">
+          <span className="sr-only">Search accounts</span>
+          <input
+            type="search"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder={FEATURES.haloIntegration
+              ? 'Search by name, site, DID, or Halo ID…'
+              : 'Search by name, site, or DID…'}
+          />
+        </label>
+        <div className="accounts-filter-tabs">
+          {[
+            { key: 'all', label: 'All' },
+            { key: 'incomplete', label: 'Incomplete' },
+            { key: 'complete', label: 'Complete' },
+          ].map(f => (
+            <button
+              key={f.key}
+              type="button"
+              className={`route-tab${filter === f.key ? ' is-active' : ''}`}
+              onClick={() => setFilter(f.key)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {importNote && (
         <div className={importNote.type === 'ok' ? 'parse-note parse-ok' : 'parse-note parse-error'}>
@@ -169,8 +195,10 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
 
       <div className="jobs-grid">
         {accounts.map(account => {
-          const hasFlow = accountHasFlowContent(account.id)
           const routeCount = accountRouteCount(account.id) || account.routeCount || 1
+          const completion = scoreAccountCompletion(account)
+          const statusLabel = completion.status === 'complete' ? `Complete` : completion.status === 'partial' ? `${completion.pct}% done` : 'Not started'
+          const statusClass = completion.status === 'complete' ? 'is-done' : completion.status === 'partial' ? 'is-partial' : ''
           return (
             <article key={account.id} className="job-card">
               <button
@@ -189,9 +217,7 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
                 <h2>{account.name || 'Untitled account'}</h2>
                 <p>{account.site || 'Site TBD'}</p>
                 <div className="job-badges">
-                  <span className={hasFlow ? 'job-badge is-done' : 'job-badge'}>
-                    {hasFlow ? 'Call flow set' : 'Call flow empty'}
-                  </span>
+                  <span className={`job-badge ${statusClass}`}>{statusLabel}</span>
                   <span className="job-badge">
                     {routeCount} route{routeCount === 1 ? '' : 's'}
                   </span>

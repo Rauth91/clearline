@@ -1992,6 +1992,81 @@ a.btn {
   font-size: 0.8rem;
 }
 
+/* ── Call flow validation warnings ──────────────────────────────────────────── */
+.cf-warn-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--warn);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  margin-left: 6px;
+  vertical-align: middle;
+  line-height: 1;
+}
+
+.cf-node-warn-warn .cf-shape {
+  stroke: var(--warn) !important;
+  stroke-width: 2.5px !important;
+}
+
+.cf-node-warn-info .cf-shape {
+  stroke: var(--info) !important;
+  stroke-width: 1.5px !important;
+  stroke-dasharray: 4 2;
+}
+
+.cf-warn-icon {
+  font-size: 9px;
+  fill: var(--warn);
+}
+
+.cf-warnings-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cf-warning-item {
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
+.cf-warning-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border: 1px solid var(--warn-border);
+}
+
+.cf-warning-info {
+  background: var(--info-soft);
+  color: var(--info);
+  border: 1px solid rgba(8, 145, 178, 0.2);
+}
+
+.cf-detail-warning {
+  font-size: 0.82rem;
+  margin: 6px 0 0;
+  padding: 6px 9px;
+  border-radius: 6px;
+}
+
+.cf-detail-warning-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.cf-detail-warning-info {
+  background: var(--info-soft);
+  color: var(--info);
+}
+
 /* Pulse animation when jumping to a form section from the diagram */
 @keyframes cf-section-flash {
   0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); }
@@ -4006,6 +4081,407 @@ a.btn {
   }
 
   .account-flow-form .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Visual-first call flow editor (AccountCallFlow v2) ─────────────────────── */
+
+.acf-hero {
+  padding-bottom: 0;
+}
+
+.acf-tabs-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.acf-tab-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.acf-icon-btn {
+  min-width: 32px;
+  padding: 6px 8px;
+  font-size: 1rem;
+}
+
+/* Two-column layout: diagram (left) + panel (right) */
+.acf-layout {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 16px;
+  align-items: start;
+}
+
+.acf-diagram-col {
+  min-width: 0;
+}
+
+/* In compact mode, give the call flow diagram more height */
+.acf-diagram-col .call-flow-mode-compact .call-flow-viewport {
+  height: clamp(320px, 55vh, 640px) !important;
+}
+
+.acf-panel-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: sticky;
+  top: 12px;
+}
+
+/* Edit panel */
+.acf-panel {
+  background: var(--bg1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.acf-panel-null {
+  padding: 20px 16px;
+  text-align: center;
+}
+
+.acf-null-hint {
+  font-size: 0.88rem;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+
+.acf-null-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.acf-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px 10px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--line);
+}
+
+.acf-panel-head h2 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 2px 0 0;
+}
+
+.acf-panel-body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.acf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.acf-field > span {
+  font-size: 0.76rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.acf-field input,
+.acf-field select,
+.acf-field textarea {
+  width: 100%;
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  padding: 8px 10px;
+  font-size: 0.88rem;
+  font-family: var(--font);
+}
+
+.acf-field textarea {
+  resize: vertical;
+  min-height: 52px;
+}
+
+.acf-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.acf-number-row {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.acf-number-row:last-of-type {
+  border-bottom: none;
+}
+
+.acf-row-with-btn {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+}
+
+.acf-row-with-btn input {
+  flex: 1;
+}
+
+.acf-add-btn {
+  margin-top: 2px;
+  font-size: 0.82rem;
+  width: 100%;
+}
+
+/* AA options row builder */
+.acf-aa-section-label {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 4px;
+}
+
+.acf-hint {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin: 0;
+}
+
+.acf-aa-row {
+  display: grid;
+  grid-template-columns: 26px 80px 1fr 22px;
+  gap: 5px;
+  align-items: center;
+}
+
+.acf-aa-row-adding {
+  grid-template-columns: 32px 76px 1fr auto 22px;
+}
+
+.acf-digit-badge {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 0.78rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.acf-digit-select {
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  padding: 5px 4px;
+  font-size: 0.82rem;
+  font-family: var(--font);
+}
+
+.acf-type-select {
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  padding: 5px 4px;
+  font-size: 0.78rem;
+  font-family: var(--font);
+}
+
+.acf-aa-value {
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  padding: 5px 8px;
+  font-size: 0.82rem;
+  font-family: var(--font);
+  min-width: 0;
+}
+
+.acf-remove-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.acf-remove-btn:hover {
+  color: var(--err);
+  background: var(--err-soft);
+}
+
+.acf-confirm-btn {
+  font-size: 0.78rem;
+  padding: 5px 10px;
+}
+
+/* Section navigation pill bar */
+.acf-section-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.acf-section-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  padding: 7px 12px;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font);
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.acf-section-btn:hover {
+  background: var(--bg2);
+  color: var(--ink);
+}
+
+.acf-section-btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  border-color: rgba(8, 145, 178, 0.2);
+  font-weight: 600;
+}
+
+/* Templates */
+.acf-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  padding: 16px 20px;
+}
+
+.acf-template-card {
+  background: var(--bg1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.acf-template-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.acf-template-icon {
+  font-size: 1.6rem;
+  margin-bottom: 8px;
+}
+
+.acf-template-name {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+
+.acf-template-desc {
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.acf-template-badge {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 7px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  border-radius: 20px;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+/* Dashboard completion badge */
+.job-badge.is-partial {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-color: var(--warn-border);
+}
+
+/* Accounts filter tabs */
+.accounts-filters {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.accounts-filters .accounts-search {
+  flex: 1;
+  min-width: 200px;
+}
+
+.accounts-filter-tabs {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.accounts-filter-tabs .route-tab {
+  border-radius: 0;
+  border-bottom: none;
+  border-right: 1px solid var(--line);
+  padding: 8px 14px;
+  font-size: 0.82rem;
+}
+
+.accounts-filter-tabs .route-tab:last-child {
+  border-right: none;
+}
+
+@media (max-width: 900px) {
+  .acf-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .acf-panel-col {
+    position: static;
+  }
+
+  .acf-two-col {
     grid-template-columns: 1fr;
   }
 }

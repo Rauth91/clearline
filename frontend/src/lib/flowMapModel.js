@@ -279,3 +279,43 @@ export function plainStepsFromDesign(design = {}) {
     detail: s.detail || '',
   }))
 }
+
+// ─── Validation ───────────────────────────────────────────────────────────────
+// Returns array of { nodeId, sectionKey, message, severity: 'warn'|'info' }
+// Zero deps on layout — works on raw design object.
+
+export function validateFlowGraph(design = {}) {
+  const warnings = []
+  const aa = design.autoAttendant || {}
+  const night = design.nightButton || {}
+  const hours = design.hours || {}
+  const callFlow = design.callFlow || {}
+  const mains = (design.mainNumbers || []).filter(n => String(n.number || n.label || '').trim())
+
+  if (!mains.length) {
+    warnings.push({ nodeId: 'main', sectionKey: 'numbers', message: 'No phone number set', severity: 'warn' })
+  }
+
+  const aaOn = aa.enabled === 'Yes'
+  if (aaOn) {
+    const hasOpts = [0,1,2,3,4,5,6,7,8,9].some(i => String(aa[`option${i}`] || '').trim())
+    if (!hasOpts) {
+      warnings.push({ nodeId: 'aa', sectionKey: 'aa', message: 'AA enabled but no menu options set', severity: 'warn' })
+    }
+    if (!String(aa.greeting || '').trim()) {
+      warnings.push({ nodeId: 'aa', sectionKey: 'aa', message: 'No greeting message', severity: 'info' })
+    }
+  }
+
+  const hasNightDest = String(night.destination || '').trim() || String(callFlow.afterHoursPath || '').trim()
+  if (!hasNightDest) {
+    warnings.push({ nodeId: 'night', sectionKey: 'night', message: 'After-hours destination not set', severity: 'warn' })
+  }
+
+  const hasHours = String(hours.weekdayOpen || '').trim() && String(hours.weekdayClose || '').trim()
+  if (hasHours && !hasNightDest) {
+    warnings.push({ nodeId: 'hours', sectionKey: 'hours', message: 'Hours set but after-hours path is empty', severity: 'warn' })
+  }
+
+  return warnings
+}

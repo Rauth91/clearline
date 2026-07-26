@@ -8,6 +8,7 @@ import {
   EXPANDED_LAYOUT,
   PREVIEW_LAYOUT,
   buildFlowModel,
+  validateFlowGraph,
 } from '../lib/flowMapModel.js'
 
 const PREVIEW = PREVIEW_LAYOUT
@@ -15,17 +16,19 @@ const EXPANDED = EXPANDED_LAYOUT
 
 export default function CallFlowDiagram({ design, compact = false, onGoToSection }) {
   const [expanded, setExpanded] = useState(false)
+  const warnings = useMemo(() => validateFlowGraph(design), [design])
 
   if (compact) {
-    return <FlowExplorer design={design} mode="compact" onGoToSection={onGoToSection} />
+    return <FlowExplorer design={design} mode="compact" warnings={warnings} onGoToSection={onGoToSection} />
   }
 
   return (
     <>
-      <FlowPreview design={design} onOpen={() => setExpanded(true)} />
+      <FlowPreview design={design} warnings={warnings} onOpen={() => setExpanded(true)} />
       {expanded && createPortal(
         <FlowOverlay
           design={design}
+          warnings={warnings}
           onClose={() => setExpanded(false)}
           onGoToSection={(key) => {
             setExpanded(false)
@@ -38,14 +41,15 @@ export default function CallFlowDiagram({ design, compact = false, onGoToSection
   )
 }
 
-function FlowPreview({ design, onOpen }) {
+function FlowPreview({ design, warnings = [], onOpen }) {
   const model = useMemo(() => buildFlowModel(design, PREVIEW), [design])
+  const warnCount = warnings.filter(w => w.severity === 'warn').length
   return (
     <div className="call-flow call-flow-preview">
       <div className="call-flow-meta">
         <div>
           <div className="survey-kicker">Call flow</div>
-          <h2>Map preview</h2>
+          <h2>Map preview{warnCount > 0 ? <span className="cf-warn-badge">{warnCount}</span> : null}</h2>
           <p>Open the full map to zoom, follow each hop, and read every destination.</p>
         </div>
         <button type="button" className="btn btn-primary" onClick={onOpen}>
@@ -59,7 +63,7 @@ function FlowPreview({ design, onOpen }) {
           role="img"
           aria-hidden="true"
         >
-          <StaticMapSvg model={model} selectedId={null} truncateMax={22} />
+          <StaticMapSvg model={model} selectedId={null} truncateMax={22} warnings={warnings} />
         </svg>
         <span className="call-flow-preview-cta">Click to open full map</span>
       </button>
@@ -67,7 +71,7 @@ function FlowPreview({ design, onOpen }) {
   )
 }
 
-function FlowOverlay({ design, onClose, onGoToSection }) {
+function FlowOverlay({ design, warnings = [], onClose, onGoToSection }) {
   return (
     <div
       className="section-modal-backdrop call-flow-overlay-backdrop"
@@ -83,13 +87,13 @@ function FlowOverlay({ design, onClose, onGoToSection }) {
         aria-labelledby="call-flow-overlay-title"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <FlowExplorer design={design} mode="expanded" onClose={onClose} onGoToSection={onGoToSection} />
+        <FlowExplorer design={design} mode="expanded" warnings={warnings} onClose={onClose} onGoToSection={onGoToSection} />
       </div>
     </div>
   )
 }
 
-function FlowExplorer({ design, mode = 'expanded', onClose, onGoToSection }) {
+function FlowExplorer({ design, mode = 'expanded', warnings = [], onClose, onGoToSection }) {
   const layout = mode === 'expanded' ? EXPANDED : PREVIEW
   const model = useMemo(() => buildFlowModel(design, layout), [design, layout])
   const [selectedId, setSelectedId] = useState(null)
@@ -342,6 +346,7 @@ function FlowExplorer({ design, mode = 'expanded', onClose, onGoToSection }) {
                 selectedId={selectedId}
                 followId={following ? model.outline[followIndex]?.id : null}
                 truncateMax={truncateMax}
+                warnings={warnings}
                 onSelect={(id) => {
                   const idx = model.outline.findIndex(s => s.id === id)
                   if (idx >= 0) setFollowIndex(idx)
@@ -362,6 +367,11 @@ function FlowExplorer({ design, mode = 'expanded', onClose, onGoToSection }) {
                 {selected.edgeIn && (
                   <p className="call-flow-detail-edge">Reached via: <strong>{selected.edgeIn}</strong></p>
                 )}
+                {warnings.filter(w => w.nodeId === selected.id).map((w, i) => (
+                  <p key={i} className={`cf-detail-warning cf-detail-warning-${w.severity}`}>
+                    ⚠ {w.message}
+                  </p>
+                ))}
                 {onGoToSection && selected.sectionKey && (
                   <button
                     type="button"
@@ -377,6 +387,15 @@ function FlowExplorer({ design, mode = 'expanded', onClose, onGoToSection }) {
                 <div className="call-flow-detail-kicker">Follow the flow</div>
                 <h3>Pick a step or press Start follow</h3>
                 <p className="muted">Next walks each hop so you can read the full destination. Click any node to see details and jump directly to its form field.</p>
+                {warnings.length > 0 && (
+                  <div className="cf-warnings-list">
+                    {warnings.map((w, i) => (
+                      <div key={i} className={`cf-warning-item cf-warning-${w.severity}`}>
+                        ⚠ {w.message}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -388,7 +407,12 @@ function FlowExplorer({ design, mode = 'expanded', onClose, onGoToSection }) {
 
 // StaticMapSvg — shared between preview and expanded modes.
 // Uses node.w / node.h (assigned by layoutGraph) — no layout object needed for sizing.
-function StaticMapSvg({ model, selectedId, followId = null, truncateMax = 28, onSelect }) {
+function StaticMapSvg({ model, selectedId, followId = null, truncateMax = 28, onSelect, warnings = [] }) {
+  const warnMap = {}
+  warnings.forEach(w => {
+    if (!warnMap[w.nodeId]) warnMap[w.nodeId] = w.severity
+    else if (w.severity === 'warn') warnMap[w.nodeId] = 'warn'
+  })
   return (
     <>
       <defs>
@@ -434,7 +458,7 @@ function StaticMapSvg({ model, selectedId, followId = null, truncateMax = 28, on
         return (
           <g
             key={node.id}
-            className={`cf-node cf-node-${node.kind}${node.tone ? ` cf-tone-${node.tone}` : ''}${active ? ' is-selected' : ''}${follow ? ' is-follow' : ''}`}
+            className={`cf-node cf-node-${node.kind}${node.tone ? ` cf-tone-${node.tone}` : ''}${active ? ' is-selected' : ''}${follow ? ' is-follow' : ''}${warnMap[node.id] ? ` cf-node-warn-${warnMap[node.id]}` : ''}`}
             transform={`translate(${node.x}, ${node.y})`}
           >
             <title>{[node.title, node.detail].filter(Boolean).join(' — ')}</title>
@@ -473,6 +497,9 @@ function StaticMapSvg({ model, selectedId, followId = null, truncateMax = 28, on
                   </text>
                 )}
               </>
+            )}
+            {warnMap[node.id] && (
+              <text x={w - 8} y={10} textAnchor="middle" className="cf-warn-icon" aria-hidden="true">⚠</text>
             )}
           </g>
         )
