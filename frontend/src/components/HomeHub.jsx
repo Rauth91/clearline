@@ -13,42 +13,30 @@ import { navigate } from '../lib/router.js'
 import { onDataChanged } from '../lib/dataEvents.js'
 import JobDayNarrative, { buildJobHealth } from './JobDayNarrative.jsx'
 
-const TOOL_HUBS = [
+const QUICK_ACTIONS = [
   {
-    id: 'reference',
-    label: 'Reference',
-    blurb: 'Look things up',
-    path: '/tools/reference',
-    links: [
-      { label: 'Yealink codes', path: '/tools/yealink' },
-      { label: 'Codec & QoS', path: '/tools/codec' },
-      { label: 'SIP response codes', path: '/tools/codec?tab=sip' },
-      { label: 'Firmware', path: '/tools/reference/firmware' },
-    ],
+    id: 'jobs',
+    label: 'Jobs',
+    blurb: 'Active installs and migrations',
+    icon: '📋',
+    path: '/jobs',
+    cta: 'View all jobs',
   },
   {
-    id: 'troubleshoot',
-    label: 'Troubleshoot',
-    blurb: "Figure out what's wrong",
-    path: '/tools/troubleshoot',
-    links: [
-      { label: 'Call Diagnostic', path: '/tools/calldiag' },
-      { label: 'Packet Capture', path: '/tools/pcap' },
-      { label: 'Network Check', path: '/tools/netcheck' },
-      { label: 'Symptom Wizard', path: '/tools/symptom' },
-    ],
+    id: 'accounts',
+    label: 'Accounts',
+    blurb: 'Customer system records',
+    icon: '🏢',
+    path: '/accounts',
+    cta: 'View accounts',
   },
   {
-    id: 'config',
-    label: 'Config',
-    blurb: 'Build configs and checklists',
-    path: '/tools/config',
-    links: [
-      { label: 'Algo paging config', path: '/tools/config/algo' },
-      { label: 'Port checklist', path: '/tools/config/ports' },
-      { label: 'Quick card (end-user guide)', path: '/tools/config/quickcard' },
-      { label: 'Router Advisor', path: '/tools/router' },
-    ],
+    id: 'tools',
+    label: 'Tools',
+    blurb: 'Diagnose, configure, and reference',
+    icon: '🔧',
+    path: '/tools/symptom',
+    cta: 'Open tools',
   },
 ]
 
@@ -66,7 +54,6 @@ function ToolkitHome({ refreshKey, onOpenSearch }) {
     if (typeof window === 'undefined') return undefined
     const desktop = window.matchMedia('(min-width: 901px)').matches
     if (desktop) {
-      // Defer so route paint settles before focusing the hero search.
       const id = window.requestAnimationFrame(() => searchRef.current?.focus())
       return () => window.cancelAnimationFrame(id)
     }
@@ -82,24 +69,20 @@ function ToolkitHome({ refreshKey, onOpenSearch }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey, tick])
 
+  const recentJobs = useMemo(() => jobs.slice(0, 5), [jobs])
+
   const urgent = useMemo(() => {
     if (!jobs.length) return null
     const rows = []
     for (const job of jobs) {
-      try {
-        rows.push(buildJobHealth(job))
-      } catch (err) {
-        console.error(err)
-      }
+      try { rows.push(buildJobHealth(job)) } catch (err) { console.error(err) }
     }
     return pickHomeUrgent(jobs, rows)
   }, [jobs])
 
   const greeting = `${greetingForHour()}.`
   const dateLabel = new Date().toLocaleDateString(undefined, {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
+    weekday: 'long', month: 'long', day: 'numeric',
   })
 
   function openSearch() {
@@ -121,55 +104,50 @@ function ToolkitHome({ refreshKey, onOpenSearch }) {
           onClick={openSearch}
           aria-label="Search jobs, tools, accounts"
         >
-          <span>Search codes, tools, jobs…</span>
+          <span>Search jobs, tools, accounts…</span>
           <kbd>⌘K</kbd>
         </button>
       </section>
 
-      <section className="home-toolkit-hubs" aria-label="Tools">
-        {TOOL_HUBS.map(hub => (
-          <article key={hub.id} className="home-hub-card">
-            <button
-              type="button"
-              className="home-hub-card-title"
-              onClick={() => navigate(hub.path)}
-            >
-              {hub.label}
-            </button>
-            <p className="home-hub-card-blurb">{hub.blurb}</p>
-            <ul className="home-hub-card-links">
-              {hub.links.map(link => (
-                <li key={link.path}>
-                  <button
-                    type="button"
-                    className="home-hub-sublink"
-                    onClick={() => navigate(link.path)}
-                  >
-                    {link.label}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </article>
+      {/* Quick action cards */}
+      <section className="home-actions" aria-label="Quick actions">
+        {QUICK_ACTIONS.map(a => (
+          <button key={a.id} type="button" className="home-action-card" onClick={() => navigate(a.path)}>
+            <div className="home-action-icon">{a.icon}</div>
+            <div className="home-action-body">
+              <div className="home-action-label">{a.label}</div>
+              <div className="home-action-blurb">{a.blurb}</div>
+            </div>
+            <div className="home-action-cta">{a.cta} →</div>
+          </button>
         ))}
       </section>
 
-      {urgent && (
-        <section className="home-jobs-strip" aria-label="Jobs">
-          <button
-            type="button"
-            className="home-jobs-strip-line"
-            onClick={() => navigate(urgent.route)}
-          >
-            {urgent.label}
-          </button>
-          <button
-            type="button"
-            className="home-jobs-strip-link"
-            onClick={() => navigate('/jobs')}
-          >
-            Jobs
-          </button>
+      {/* Recent jobs */}
+      {recentJobs.length > 0 && (
+        <section className="home-recent" aria-label="Recent jobs">
+          <div className="home-recent-header">
+            <span className="home-recent-title">Recent jobs</span>
+            <button type="button" className="home-recent-all" onClick={() => navigate('/jobs')}>All jobs →</button>
+          </div>
+          {recentJobs.map(job => {
+            const isMig = job.jobType === 'migration'
+            const route = isMig ? `/job/${job.id}/migration` : `/job/${job.id}`
+            return (
+              <button key={job.id} type="button" className="home-recent-row" onClick={() => navigate(route)}>
+                <span className={`home-recent-type${isMig ? ' is-migration' : ''}`}>{isMig ? 'Migration' : 'Install'}</span>
+                <span className="home-recent-name">{job.customer || 'Unnamed'}{job.site ? ` · ${job.site}` : ''}</span>
+                <span className="home-recent-arrow">→</span>
+              </button>
+            )
+          })}
+        </section>
+      )}
+
+      {recentJobs.length === 0 && (
+        <section className="home-empty" aria-label="Get started">
+          <p className="home-empty-text">No jobs yet — create one to get started.</p>
+          <button type="button" className="btn btn-primary" onClick={() => navigate('/jobs?new=1')}>+ New job</button>
         </section>
       )}
     </div>

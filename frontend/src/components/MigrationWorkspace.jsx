@@ -626,6 +626,70 @@ function StepDevices({ data, onChange }) {
   )
 }
 
+/* ── Button Layout split-panel ────────────────────────────── */
+function BLPanel({ layouts, onAdd, onUpdate, onRemove }) {
+  const [selectedId, setSelectedId] = useState(layouts[0]?.id || null)
+  const selected = layouts.find(bl => bl.id === selectedId) || layouts[0] || null
+
+  // When a new layout is added, select it
+  function handleAdd() {
+    onAdd()
+    // onAdd mutates parent data; we'll select the new one via useEffect
+  }
+  useEffect(() => {
+    if (!selected && layouts.length) setSelectedId(layouts[0].id)
+    if (selected && !layouts.find(bl => bl.id === selected.id)) {
+      setSelectedId(layouts[0]?.id || null)
+    }
+  }, [layouts])
+
+  return (
+    <div className="mig-sys-panel">
+      <div className="mig-bl-split">
+        {/* Left: extension list */}
+        <div className="mig-bl-list">
+          {layouts.map(bl => (
+            <button key={bl.id} type="button"
+              className={`mig-bl-list-item${bl.id===selected?.id?' is-active':''}`}
+              onClick={()=>setSelectedId(bl.id)}>
+              <span className="mig-bl-item-ext">{bl.extension||<span style={{opacity:.4}}>No ext</span>}</span>
+              <span className="mig-bl-item-meta">
+                {(bl.pages||[]).reduce((s,p)=>s+(p.keys||[]).length,0)} keys
+                {(bl.pages||[]).length > 1 ? `, ${(bl.pages||[]).length} pages` : ''}
+              </span>
+            </button>
+          ))}
+          <button type="button" className="mig-bl-add-btn" onClick={handleAdd}>+ Add phone</button>
+        </div>
+
+        {/* Right: editor */}
+        {selected ? (
+          <div className="mig-bl-editor">
+            <div className="mig-bl-editor-head">
+              <input className="mig-card-title-input" style={{flex:1}}
+                value={selected.extension}
+                onChange={e=>onUpdate(selected.id,'extension',e.target.value)}
+                placeholder="Extension (e.g. 1001)"/>
+              <button type="button" className="mig-del-btn" style={{marginLeft:8}}
+                onClick={()=>onRemove(selected.id)}>Remove phone</button>
+            </div>
+            <Field label="Key assignments">
+              <PagedKeyBuilder
+                pages={selected.pages||[{id:makeId(),label:'Page 1',keys:[]}]}
+                onChange={pages=>onUpdate(selected.id,'pages',pages)}/>
+            </Field>
+            <Field label="Sidecar / expansion notes" hint="e.g. EXP50 attached — 20 BLF keys">
+              <MInput value={selected.sidecarNotes||''} onChange={v=>onUpdate(selected.id,'sidecarNotes',v)} placeholder="EXP50 attached — 20 BLF keys"/>
+            </Field>
+          </div>
+        ) : (
+          <div className="mig-bl-empty">No phones added yet — click <strong>+ Add phone</strong> to start.</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /* ════════════════════════════════════════════════════════════
    STEP 4 — System Config (AAs, Call Flows, Hunt Groups, Button Layouts)
    ════════════════════════════════════════════════════════════ */
@@ -772,26 +836,7 @@ function StepSystem({ data, onChange }) {
 
       {/* Button Layouts */}
       {tab === 'bl' && (
-        <div className="mig-sys-panel">
-          <p className="mig-hint">Add a layout per phone. Use the key builder to assign each physical button — no typing required.</p>
-          {(data.buttonLayouts||[]).map(bl => (
-            <div key={bl.id} className="mig-card">
-              <div className="mig-card-head">
-                <input className="mig-card-title-input" value={bl.extension} onChange={e=>updateBL(bl.id,'extension',e.target.value)} placeholder="Extension (e.g. 1001)"/>
-                <button type="button" className="mig-del-btn" onClick={()=>removeBL(bl.id)}>✕</button>
-              </div>
-              <Field label="Key assignments">
-                <PagedKeyBuilder
-                  pages={bl.pages||[{id:makeId(),label:'Page 1',keys:[]}]}
-                  onChange={pages=>updateBL(bl.id,'pages',pages)}/>
-              </Field>
-              <Field label="Sidecar / expansion module notes" hint="e.g. EXP50 attached — 20 BLF keys">
-                <MInput value={bl.sidecarNotes} onChange={v=>updateBL(bl.id,'sidecarNotes',v)} placeholder="EXP50 attached — 20 BLF keys"/>
-              </Field>
-            </div>
-          ))}
-          <button type="button" className="btn btn-secondary" onClick={addBL}>+ Add phone layout</button>
-        </div>
+        <BLPanel layouts={data.buttonLayouts||[]} onAdd={addBL} onUpdate={updateBL} onRemove={removeBL}/>
       )}
     </div>
   )

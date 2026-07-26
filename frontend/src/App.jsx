@@ -77,18 +77,20 @@ const WORKSPACES = [
 ]
 
 const TOOLS = [
-  { id: 'calldiag', label: 'Call Diagnostic' },
-  { id: 'pcap', label: 'Packet Capture' },
-  { id: 'netcheck', label: 'Network Check' },
-  { id: 'yealink', label: 'Yealink Codes' },
-  { id: 'symptom', label: 'Symptom Wizard' },
-  { id: 'ports', label: 'Port Checklist' },
-  { id: 'algo', label: 'Algo Config' },
-  { id: 'quickcard', label: 'Quick Card' },
-  { id: 'codec', label: 'Codec & QoS' },
-  { id: 'router', label: 'Router Advisor' },
-  { id: 'carriers', label: 'Carrier Templates' },
-  { id: 'meta2ns', label: 'Meta → NS' },
+  // Troubleshoot — Symptom Wizard leads, routes you to the right tool
+  { id: 'symptom',  label: 'Symptom Wizard',   group: 'troubleshoot' },
+  { id: 'calldiag', label: 'Call Diagnostic',   group: 'troubleshoot' },
+  { id: 'pcap',     label: 'Packet Capture',    group: 'troubleshoot' },
+  { id: 'netcheck', label: 'Network Check',     group: 'troubleshoot' },
+  // Configure — build configs and generate docs
+  { id: 'yealink',  label: 'Yealink Codes',     group: 'configure' },
+  { id: 'algo',     label: 'Algo Paging',        group: 'configure' },
+  { id: 'carriers', label: 'Carrier Templates',  group: 'configure' },
+  { id: 'ports',    label: 'Port Checklist',     group: 'configure' },
+  { id: 'quickcard',label: 'End-User Guide',     group: 'configure' },
+  // Reference — look things up
+  { id: 'codec',    label: 'Codec & QoS',        group: 'reference' },
+  { id: 'router',   label: 'Router Advisor',     group: 'reference' },
 ]
 
 const TOOL_GROUPS = [
@@ -109,19 +111,19 @@ const SECTION_LABELS = {
 const TOOL_LABELS = {
   'tools-reference': 'Reference',
   'tools-troubleshoot': 'Troubleshoot',
-  'tools-config': 'Config',
+  'tools-config': 'Configure',
+  symptom:  'Symptom Wizard',
   calldiag: 'Call Diagnostic',
-  pcap: 'Packet Capture',
+  pcap:     'Packet Capture',
   netcheck: 'Network Check',
-  router: 'Router Advisor',
-  yealink: 'Yealink Codes',
-  symptom: 'Symptom Wizard',
-  ports: 'Port Checklist',
-  algo: 'Algo Config',
-  quickcard: 'Quick Card',
-  codec: 'Codec & QoS',
+  yealink:  'Yealink Codes',
+  algo:     'Algo Paging',
   carriers: 'Carrier Templates',
-  meta2ns: 'Meta → NS Migration',
+  ports:    'Port Checklist',
+  quickcard:'End-User Guide',
+  codec:    'Codec & QoS',
+  router:   'Router Advisor',
+  meta2ns:  'MCU CSV Converter',
 }
 
 export default function App() {
@@ -233,6 +235,14 @@ export default function App() {
       setActiveJobId(null)
     }
   }, [repoReady, jobId, accountId])
+
+  // Migration jobs skip the cockpit — land directly on the migration workspace
+  useEffect(() => {
+    if (!repoReady) return
+    if (route.name === 'cockpit' && job?.jobType === 'migration') {
+      navigate(`/job/${jobId}/migration`, { replace: true })
+    }
+  }, [repoReady, route.name, job?.jobType, jobId])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -443,11 +453,11 @@ export default function App() {
                 <span className={`sidebar-job-type-badge${job?.jobType === 'migration' ? ' is-migration' : ' is-install'}`}>
                   {job?.jobType === 'migration' ? 'Migration' : 'New Install'}
                 </span>
-                <button type="button" className={`sidebar-sub-item${route.name === 'cockpit' ? ' is-active' : ''}`} onClick={() => navigate(`/job/${jobId}`)}>Cockpit</button>
                 {job?.jobType === 'migration' ? (
-                  <button type="button" className={`sidebar-sub-item${route.name === 'migration' ? ' is-active' : ''}`} onClick={() => navigate(`/job/${jobId}/migration`)}>Migration</button>
+                  <button type="button" className={`sidebar-sub-item${route.name === 'migration' ? ' is-active' : ''}`} onClick={() => navigate(`/job/${jobId}/migration`)}>Migration Workspace</button>
                 ) : (
                   <>
+                    <button type="button" className={`sidebar-sub-item${route.name === 'cockpit' ? ' is-active' : ''}`} onClick={() => navigate(`/job/${jobId}`)}>Overview</button>
                     {WORKSPACES.map(ws => (
                       <button key={ws.id} type="button" className={`sidebar-sub-item${route.name === ws.route ? ' is-active' : ''}`} onClick={() => navigate(`/job/${jobId}/${ws.route}`)}>
                         {ws.label}
@@ -465,20 +475,20 @@ export default function App() {
             <>
               <div className="sidebar-divider" />
               <div className="sidebar-sub-section">
-                <span className="sidebar-section-label">Diagnostics</span>
-                {TOOLS.filter(t => ['calldiag', 'pcap', 'netcheck', 'symptom'].includes(t.id)).map(tool => (
+                <span className="sidebar-section-label">Troubleshoot</span>
+                {TOOLS.filter(t => t.group === 'troubleshoot').map(tool => (
                   <button key={tool.id} type="button" className={`sidebar-sub-item${route.name === 'tool' && route.params.toolId === tool.id ? ' is-active' : ''}`} onClick={() => navigate(`/tools/${tool.id}`)}>
                     {tool.label}
                   </button>
                 ))}
-                <span className="sidebar-section-label">Config</span>
-                {TOOLS.filter(t => ['yealink', 'algo', 'carriers', 'ports', 'meta2ns'].includes(t.id)).map(tool => (
+                <span className="sidebar-section-label">Configure</span>
+                {TOOLS.filter(t => t.group === 'configure').map(tool => (
                   <button key={tool.id} type="button" className={`sidebar-sub-item${route.name === 'tool' && route.params.toolId === tool.id ? ' is-active' : ''}`} onClick={() => navigate(`/tools/${tool.id}`)}>
                     {tool.label}
                   </button>
                 ))}
                 <span className="sidebar-section-label">Reference</span>
-                {TOOLS.filter(t => ['codec', 'quickcard', 'router'].includes(t.id)).map(tool => (
+                {TOOLS.filter(t => t.group === 'reference').map(tool => (
                   <button key={tool.id} type="button" className={`sidebar-sub-item${route.name === 'tool' && route.params.toolId === tool.id ? ' is-active' : ''}`} onClick={() => navigate(`/tools/${tool.id}`)}>
                     {tool.label}
                   </button>
