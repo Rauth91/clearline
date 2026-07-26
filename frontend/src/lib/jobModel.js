@@ -72,6 +72,10 @@ export {
   goLiveCompleteness,
   jobNextActions,
   focChipStatus,
+  describeDay,
+  pickTopBlocker,
+  pickHomeUrgent,
+  greetingForHour,
 } from './jobHealth.js'
 
 export { computeVerdict } from './networkReadiness.js'

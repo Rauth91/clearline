@@ -1101,4 +1101,33 @@ export function parseCapture(rawText) {
   return { calls }
 }
 
-export { formatDelta, failureCodeMeaning, classifyCodec }
+/**
+ * Build enriched calls from already-parsed SIP message objects
+ * (e.g. from a pcap). Messages must include direction/peerIp like NetSapiens path.
+ * @param {object[]} messages
+ * @returns {{ calls: object[] }}
+ */
+export function callsFromSipMessages(messages) {
+  const sipByCall = new Map()
+  for (const msg of messages || []) {
+    if (!msg) continue
+    const cid = msg.callId || 'unknown'
+    if (!sipByCall.has(cid)) sipByCall.set(cid, [])
+    sipByCall.get(cid).push(msg)
+  }
+  const calls = []
+  for (const [callId, msgs] of sipByCall) {
+    msgs.sort((a, b) => (a.unixMs || 0) - (b.unixMs || 0))
+    const call = enrichCall({
+      callId,
+      messages: msgs,
+      responders: [],
+      li: [],
+    })
+    calls.push(call)
+  }
+  calls.sort((a, b) => (a.startMs || 0) - (b.startMs || 0))
+  return { calls }
+}
+
+export { formatDelta, failureCodeMeaning, classifyCodec, parseSipMessage, enrichCall }

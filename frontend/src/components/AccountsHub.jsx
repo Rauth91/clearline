@@ -11,6 +11,7 @@ import {
   searchAccounts,
   setActiveAccountId,
 } from '../lib/accountModel.js'
+import { FEATURES } from '../lib/features.js'
 
 const EMPTY_FORM = {
   name: '',
@@ -104,8 +105,8 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
           <div className="survey-kicker">Accounts</div>
           <h1>Call flow library</h1>
           <p>
-            Living call-flow charts per customer. Open an account when a ticket comes in,
-            and update the chart when routing changes.
+            Living call-flow charts per customer. Open an account to view or update routing
+            when changes land.
           </p>
         </div>
         <div className="survey-actions">
@@ -133,7 +134,9 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
 
       <p className="jobs-privacy-note">
         <strong>Support docs stay on this device</strong> until you export them.
-        Fill Halo client ID now so a later sync can push summaries into Halo KB for AI suggestions.
+        {FEATURES.haloIntegration
+          ? ' Fill Halo client ID now so a later sync can push summaries into Halo KB for AI suggestions.'
+          : ''}
       </p>
 
       <label className="field accounts-search">
@@ -142,7 +145,9 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
           type="search"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Search by name, site, DID, or Halo ID…"
+          placeholder={FEATURES.haloIntegration
+            ? 'Search by name, site, DID, or Halo ID…'
+            : 'Search by name, site, or DID…'}
         />
       </label>
 
@@ -176,7 +181,11 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
                   onOpenAccount(account.id)
                 }}
               >
-                <div className="survey-kicker">{account.mainDid || account.haloClientId || 'Account'}</div>
+                <div className="survey-kicker">
+                  {account.mainDid
+                    || (FEATURES.haloIntegration && account.haloClientId)
+                    || 'Account'}
+                </div>
                 <h2>{account.name || 'Untitled account'}</h2>
                 <p>{account.site || 'Site TBD'}</p>
                 <div className="job-badges">
@@ -186,7 +195,7 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
                   <span className="job-badge">
                     {routeCount} route{routeCount === 1 ? '' : 's'}
                   </span>
-                  {account.haloClientId && (
+                  {FEATURES.haloIntegration && account.haloClientId && (
                     <span className="job-badge">Halo {account.haloClientId}</span>
                   )}
                 </div>
@@ -235,7 +244,11 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
               <div>
                 <div className="survey-kicker">Accounts</div>
                 <h2 id="new-account-title">New account</h2>
-                <p>Customer identity for the call-flow chart. Halo ID is optional for now.</p>
+                <p>
+                  {FEATURES.haloIntegration
+                    ? 'Customer identity for the call-flow chart. Halo ID is optional for now.'
+                    : 'Customer identity for the call-flow chart.'}
+                </p>
               </div>
               <div className="section-modal-nav">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowNew(false)}>
@@ -270,14 +283,16 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
                     placeholder="555-0100"
                   />
                 </label>
-                <label className="field">
-                  <span>Halo client ID</span>
-                  <input
-                    value={form.haloClientId}
-                    onChange={e => setForm(f => ({ ...f, haloClientId: e.target.value }))}
-                    placeholder="Optional — for later KB sync"
-                  />
-                </label>
+                {FEATURES.haloIntegration && (
+                  <label className="field">
+                    <span>Halo client ID</span>
+                    <input
+                      value={form.haloClientId}
+                      onChange={e => setForm(f => ({ ...f, haloClientId: e.target.value }))}
+                      placeholder="Optional — for later KB sync"
+                    />
+                  </label>
+                )}
                 <label className="field">
                   <span>Account number</span>
                   <input

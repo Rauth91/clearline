@@ -18,6 +18,7 @@ import {
   loadJobSurvey,
   saveJobGoLive,
 } from '../lib/jobModel.js'
+import { registerWorkspaceFlush } from '../lib/reloadGate.js'
 import { ConflictBanner } from './ConflictReview.jsx'
 
 const PANELS = [
@@ -73,6 +74,13 @@ export default function GoLive({ jobId }) {
 
   useEffect(() => () => {
     if (jobId) saveJobGoLive(jobId, latestGoLive.current)
+  }, [jobId])
+
+  useEffect(() => {
+    if (!jobId) return undefined
+    return registerWorkspaceFlush(() => {
+      saveJobGoLive(jobId, latestGoLive.current)
+    })
   }, [jobId])
 
   useEffect(() => {

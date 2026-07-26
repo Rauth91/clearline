@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import CallFlowDiagram from './CallFlowDiagram.jsx'
 import {
@@ -23,8 +23,16 @@ import {
   loadJobSurvey,
   saveJobDesign,
 } from '../lib/jobModel.js'
+import { canApplyRemoteRefresh, onDataChanged } from '../lib/dataEvents.js'
+import { registerWorkspaceFlush } from '../lib/reloadGate.js'
 import { ConflictBanner } from './ConflictReview.jsx'
-import QuickCard from './QuickCard.jsx'
+import {
+  DesignAssumptionsPanel,
+  DesignMainNumbersPanel,
+  DesignQuickCardPanel,
+  DesignSectionPanel,
+  DesignUsersPanel,
+} from './designPanels.jsx'
 
 const EMPTY_DESIGN = {
   project: {
@@ -94,15 +102,7 @@ const PANELS = [
   ['quickCard', 'Quick cards', 'Print desk cards autofilled from users on this job'],
 ]
 
-const YES_NO_FIELDS = new Set(['enabled', 'needed', 'perUser'])
-
-const LONG_FIELDS = new Set([
-  'summary', 'notes', 'list', 'closedMessage', 'overflow', 'didPlan',
-  'greeting', 'menuPrompt', 'option0', 'option1', 'option2', 'option3', 'option4',
-  'option5', 'option6', 'option7', 'option8', 'option9', 'timeoutAction', 'invalidAction',
-  'destination', 'message', 'generalMailbox', 'daytimePath', 'afterHoursPath',
-  'ringGroups', 'queues', 'failover', 'networkGear', 'firewall',
-])
+const MemoCallFlowDiagram = memo(CallFlowDiagram)
 
 export default function SystemDesign({ jobId }) {
   const [design, setDesign] = useState(() => loadDesign(jobId))
@@ -110,8 +110,10 @@ export default function SystemDesign({ jobId }) {
   const [exportingPdf, setExportingPdf] = useState(false)
   const [activePanel, setActivePanel] = useState(null)
   const [surveyDrift, setSurveyDrift] = useState(() => isDesignOutOfDate(jobId))
+  const dirtyRef = useRef(false)
 
   useEffect(() => {
+    dirtyRef.current = false
     setDesign(loadDesign(jobId))
     setImportNote(null)
     setActivePanel(null)
@@ -125,6 +127,7 @@ export default function SystemDesign({ jobId }) {
     if (!jobId) return undefined
     const t = setTimeout(() => {
       saveJobDesign(jobId, latestDesign.current)
+      dirtyRef.current = false
       setSurveyDrift(isDesignOutOfDate(jobId))
     }, 450)
     return () => clearTimeout(t)
@@ -134,6 +137,26 @@ export default function SystemDesign({ jobId }) {
     if (jobId) {
       saveJobDesign(jobId, latestDesign.current)
     }
+  }, [jobId])
+
+  useEffect(() => {
+    if (!jobId) return undefined
+    return registerWorkspaceFlush(() => {
+      saveJobDesign(jobId, latestDesign.current)
+    })
+  }, [jobId])
+
+  useEffect(() => {
+    if (!jobId) return undefined
+    return onDataChanged(async (detail) => {
+      if (detail.kind !== 'job') return
+      if (!(detail.ids || []).includes(jobId)) return
+      if (dirtyRef.current) return
+      const ok = await canApplyRemoteRefresh(jobId)
+      if (!ok) return
+      setDesign(loadDesign(jobId))
+      setSurveyDrift(isDesignOutOfDate(jobId))
+    })
   }, [jobId])
 
   useEffect(() => {
@@ -180,33 +203,47 @@ export default function SystemDesign({ jobId }) {
     return { id, title, ...prog }
   }), [design])
 
+  /** Only flow-relevant slices — typing in assumptions/devices/etc. must not re-render the map. */
+  const flowDesign = useMemo(() => ({
+    hours: design.hours,
+    autoAttendant: design.autoAttendant,
+    nightButton: design.nightButton,
+    voicemail: design.voicemail,
+    callFlow: design.callFlow,
+    numbering: design.numbering,
+    mainNumbers: design.mainNumbers,
+  }), [
+    design.hours,
+    design.autoAttendant,
+    design.nightButton,
+    design.voicemail,
+    design.callFlow,
+    design.numbering,
+    design.mainNumbers,
+  ])
+
   const panelMeta = activePanel
     ? PANELS.find(([id]) => id === activePanel)
     : null
 
-  function movePanel(delta) {
-    setActivePanel(current => {
-      if (!current) return current
-      const idx = PANELS.findIndex(([id]) => id === current)
-      if (idx < 0) return current
-      const next = PANELS[idx + delta]
-      return next ? next[0] : current
-    })
-  }
+  const markDirty = useCallback((updater) => {
+    dirtyRef.current = true
+    setDesign(updater)
+  }, [])
 
-  function update(section, field, value) {
-    setDesign(prev => ({
+  const update = useCallback((section, field, value) => {
+    markDirty(prev => ({
       ...prev,
       [section]: {
         ...prev[section],
         [field]: value,
       },
     }))
-  }
+  }, [markDirty])
 
-  function importFromSurvey() {
+  const importFromSurvey = useCallback(() => {
     const survey = loadJobSurvey(jobId)
-    setDesign(prev => applySurveyToDesign(prev, survey))
+    markDirty(prev => applySurveyToDesign(prev, survey))
     const mainCount = (survey.mainNumbers || []).filter(n => n.number || n.label).length
     const userCount = (survey.users || []).filter(u => u.name || u.extension || u.phone).length
     setImportNote({
@@ -214,38 +251,31 @@ export default function SystemDesign({ jobId }) {
       text: `Synced from Site Survey: ${mainCount} main number(s), ${userCount} user(s).`,
     })
     setSurveyDrift(false)
-  }
+  }, [jobId, markDirty])
 
-  function reset() {
-    if (!confirm('Clear this system design draft?')) return
-    setDesign(EMPTY_DESIGN)
-    setImportNote(null)
-    setActivePanel(null)
-  }
-
-  function addMainNumber() {
-    setDesign(prev => ({
+  const addMainNumber = useCallback(() => {
+    markDirty(prev => ({
       ...prev,
       mainNumbers: [...(prev.mainNumbers || []), { id: makeId(), label: '', number: '', notes: '' }],
     }))
-  }
+  }, [markDirty])
 
-  function updateMainNumber(id, field, value) {
-    setDesign(prev => ({
+  const updateMainNumber = useCallback((id, field, value) => {
+    markDirty(prev => ({
       ...prev,
-      mainNumbers: (prev.mainNumbers || []).map(n => n.id === id ? { ...n, [field]: value } : n),
+      mainNumbers: (prev.mainNumbers || []).map(n => (n.id === id ? { ...n, [field]: value } : n)),
     }))
-  }
+  }, [markDirty])
 
-  function removeMainNumber(id) {
-    setDesign(prev => ({
+  const removeMainNumber = useCallback((id) => {
+    markDirty(prev => ({
       ...prev,
       mainNumbers: (prev.mainNumbers || []).filter(n => n.id !== id),
     }))
-  }
+  }, [markDirty])
 
-  function addUser() {
-    setDesign(prev => ({
+  const addUser = useCallback(() => {
+    markDirty(prev => ({
       ...prev,
       users: [...(prev.users || []), {
         id: makeId(),
@@ -259,20 +289,32 @@ export default function SystemDesign({ jobId }) {
         voicemail: 'Yes',
       }],
     }))
-  }
+  }, [markDirty])
 
-  function updateUser(id, field, value) {
-    setDesign(prev => ({
+  const updateUser = useCallback((id, field, value) => {
+    markDirty(prev => ({
       ...prev,
-      users: (prev.users || []).map(u => u.id === id ? { ...u, [field]: value } : u),
+      users: (prev.users || []).map(u => (u.id === id ? { ...u, [field]: value } : u)),
     }))
-  }
+  }, [markDirty])
 
-  function removeUser(id) {
-    setDesign(prev => ({
+  const removeUser = useCallback((id) => {
+    markDirty(prev => ({
       ...prev,
       users: (prev.users || []).filter(u => u.id !== id),
     }))
+  }, [markDirty])
+
+  const onAssumptionsChange = useCallback((value) => {
+    markDirty(prev => ({ ...prev, assumptions: value }))
+  }, [markDirty])
+
+  function reset() {
+    if (!confirm('Clear this system design draft?')) return
+    dirtyRef.current = true
+    setDesign(EMPTY_DESIGN)
+    setImportNote(null)
+    setActivePanel(null)
   }
 
   async function exportPdf() {
@@ -285,6 +327,62 @@ export default function SystemDesign({ jobId }) {
     } finally {
       setExportingPdf(false)
     }
+  }
+
+  function movePanel(delta) {
+    setActivePanel(current => {
+      if (!current) return current
+      const idx = PANELS.findIndex(([id]) => id === current)
+      if (idx < 0) return current
+      const next = PANELS[idx + delta]
+      return next ? next[0] : current
+    })
+  }
+
+  function renderActivePanel() {
+    if (activePanel === 'quickCard') {
+      return <DesignQuickCardPanel jobId={jobId} design={design} />
+    }
+    if (activePanel === 'mainNumbers') {
+      return (
+        <DesignMainNumbersPanel
+          mainNumbers={design.mainNumbers || []}
+          onAdd={addMainNumber}
+          onUpdate={updateMainNumber}
+          onRemove={removeMainNumber}
+          onImportFromSurvey={importFromSurvey}
+        />
+      )
+    }
+    if (activePanel === 'users') {
+      return (
+        <DesignUsersPanel
+          users={design.users || []}
+          onAdd={addUser}
+          onUpdate={updateUser}
+          onRemove={removeUser}
+          onImportFromSurvey={importFromSurvey}
+        />
+      )
+    }
+    if (activePanel === 'assumptions') {
+      return (
+        <DesignAssumptionsPanel
+          assumptions={design.assumptions}
+          onChange={onAssumptionsChange}
+        />
+      )
+    }
+    if (activePanel) {
+      return (
+        <DesignSectionPanel
+          id={activePanel}
+          data={design[activePanel]}
+          onUpdate={update}
+        />
+      )
+    }
+    return null
   }
 
   const panelIndex = activePanel ? PANELS.findIndex(([id]) => id === activePanel) : -1
@@ -358,7 +456,7 @@ export default function SystemDesign({ jobId }) {
       </div>
 
       <div className="design-flow-wrap" id="design-flow-map">
-        <CallFlowDiagram design={design} />
+        <MemoCallFlowDiagram design={flowDesign} />
       </div>
 
       {activePanel && panelMeta && createPortal(
@@ -397,20 +495,7 @@ export default function SystemDesign({ jobId }) {
               </div>
             </div>
             <div className="section-modal-body">
-              <PanelBody
-                id={activePanel}
-                jobId={jobId}
-                design={design}
-                setDesign={setDesign}
-                onUpdate={update}
-                importFromSurvey={importFromSurvey}
-                addMainNumber={addMainNumber}
-                updateMainNumber={updateMainNumber}
-                removeMainNumber={removeMainNumber}
-                addUser={addUser}
-                updateUser={updateUser}
-                removeUser={removeUser}
-              />
+              {renderActivePanel()}
             </div>
           </div>
         </div>,
@@ -418,129 +503,6 @@ export default function SystemDesign({ jobId }) {
       )}
     </section>
   )
-}
-
-function PanelBody({
-  id,
-  jobId,
-  design,
-  setDesign,
-  onUpdate,
-  importFromSurvey,
-  addMainNumber,
-  updateMainNumber,
-  removeMainNumber,
-  addUser,
-  updateUser,
-  removeUser,
-}) {
-  if (id === 'quickCard') {
-    return (
-      <QuickCard
-        embedded
-        jobId={jobId}
-        design={design}
-      />
-    )
-  }
-
-  if (id === 'mainNumbers') {
-    return (
-      <div>
-        <div className="design-list-head">
-          <div>
-            <h3>Main numbers</h3>
-            <p>Company lines used for the design and auto attendant.</p>
-          </div>
-          <button type="button" className="btn btn-secondary" onClick={addMainNumber}>Add number</button>
-        </div>
-        <div className="design-table">
-          <div className="design-table-row design-table-head">
-            <span>Label</span><span>Number</span><span>Notes</span><span />
-          </div>
-          {(design.mainNumbers || []).length === 0 && (
-            <div className="empty-hint-action">
-              <p>No main numbers yet. Import from Site Survey or add the primary line.</p>
-              <button type="button" className="btn btn-primary" onClick={importFromSurvey}>Import from Survey</button>
-            </div>
-          )}
-          {(design.mainNumbers || []).map(entry => (
-            <div className="design-table-row" key={entry.id}>
-              <input value={entry.label} onChange={e => updateMainNumber(entry.id, 'label', e.target.value)} placeholder="Main line" />
-              <input value={entry.number} onChange={e => updateMainNumber(entry.id, 'number', e.target.value)} placeholder="337-555-0100" />
-              <input value={entry.notes} onChange={e => updateMainNumber(entry.id, 'notes', e.target.value)} placeholder="Rings to AA" />
-              <button type="button" onClick={() => removeMainNumber(entry.id)}>Remove</button>
-            </div>
-          ))}
-        </div>
-      </div>
-    )
-  }
-
-  if (id === 'users') {
-    return (
-      <div>
-        <div className="design-list-head">
-          <div>
-            <h3>Users, extensions, and DIDs</h3>
-            <p>Who gets an extension, email, which DID, and whether they need voicemail.</p>
-          </div>
-          <button type="button" className="btn btn-secondary" onClick={addUser}>Add user</button>
-        </div>
-        <div className="design-table design-user-table">
-          <div className="design-table-row design-table-head">
-            <span>Name</span>
-            <span>Username</span>
-            <span>Email</span>
-            <span>Ext</span>
-            <span>DID</span>
-            <span>Location</span>
-            <span>Role</span>
-            <span>VM</span>
-            <span />
-          </div>
-          {(design.users || []).length === 0 && (
-            <div className="empty-hint-action">
-              <p>No users yet. Pull them from the Site Survey draft.</p>
-              <button type="button" className="btn btn-primary" onClick={importFromSurvey}>Import from Survey</button>
-            </div>
-          )}
-          {(design.users || []).map(user => (
-            <div className="design-table-row" key={user.id}>
-              <input value={user.name} onChange={e => updateUser(user.id, 'name', e.target.value)} placeholder="Jane Tech" />
-              <input value={user.username} onChange={e => updateUser(user.id, 'username', e.target.value)} placeholder="jane.tech" />
-              <input type="email" value={user.email || ''} onChange={e => updateUser(user.id, 'email', e.target.value)} placeholder="jane@company.com" />
-              <input value={user.extension} onChange={e => updateUser(user.id, 'extension', e.target.value)} placeholder="1001" />
-              <input value={user.did} onChange={e => updateUser(user.id, 'did', e.target.value)} placeholder="337-555-0101" />
-              <input value={user.location} onChange={e => updateUser(user.id, 'location', e.target.value)} placeholder="Front desk" />
-              <input value={user.role} onChange={e => updateUser(user.id, 'role', e.target.value)} placeholder="User" />
-              <select value={user.voicemail || 'Yes'} onChange={e => updateUser(user.id, 'voicemail', e.target.value)}>
-                <option>Yes</option>
-                <option>No</option>
-              </select>
-              <button type="button" onClick={() => removeUser(user.id)}>Remove</button>
-            </div>
-          ))}
-        </div>
-      </div>
-    )
-  }
-
-  if (id === 'assumptions') {
-    return (
-      <label className="survey-field full">
-        Notes and assumptions
-        <textarea
-          value={design.assumptions}
-          onChange={e => setDesign(prev => ({ ...prev, assumptions: e.target.value }))}
-          placeholder="Document assumptions, carrier dependencies, number port timing, holiday overrides, customer decisions..."
-          rows={10}
-        />
-      </label>
-    )
-  }
-
-  return <SectionFields id={id} data={design[id]} onUpdate={onUpdate} />
 }
 
 function panelProgress(design, id) {
@@ -563,96 +525,6 @@ function panelProgress(design, id) {
     return { filled, total: 1, ratio: filled }
   }
   return sectionProgress(design, id)
-}
-
-function SectionFields({ id, data, onUpdate }) {
-  return (
-    <div className="design-fields">
-      {Object.entries(data || {}).map(([field, value]) => (
-        <label key={field} className={LONG_FIELDS.has(field) ? 'span-2' : ''}>
-          <span>{fieldLabel(id, field)}</span>
-          {YES_NO_FIELDS.has(field) ? (
-            <select value={value || ''} onChange={e => onUpdate(id, field, e.target.value)}>
-              <option value="">—</option>
-              <option>Yes</option>
-              <option>No</option>
-            </select>
-          ) : LONG_FIELDS.has(field) ? (
-            <textarea
-              value={value}
-              onChange={e => onUpdate(id, field, e.target.value)}
-              placeholder={placeholderFor(id, field)}
-            />
-          ) : (
-            <input
-              value={value}
-              onChange={e => onUpdate(id, field, e.target.value)}
-              placeholder={placeholderFor(id, field)}
-            />
-          )}
-        </label>
-      ))}
-    </div>
-  )
-}
-
-function fieldLabel(section, field) {
-  const labels = {
-    weekdayOpen: 'Weekday open',
-    weekdayClose: 'Weekday close',
-    saturdayOpen: 'Saturday open',
-    saturdayClose: 'Saturday close',
-    sundayOpen: 'Sunday open',
-    sundayClose: 'Sunday close',
-    lunchHours: 'Lunch / mid-day break',
-    closedMessage: 'Holiday closed message',
-    overflow: 'Holiday call overflow',
-    didPlan: 'DID plan',
-    emergency: 'E911 / emergency notes',
-    option0: 'Press 0',
-    option1: 'Press 1',
-    option2: 'Press 2',
-    option3: 'Press 3',
-    option4: 'Press 4',
-    option5: 'Press 5',
-    option6: 'Press 6',
-    option7: 'Press 7',
-    option8: 'Press 8',
-    option9: 'Press 9',
-    timeoutAction: 'Timeout action',
-    invalidAction: 'Invalid digit action',
-    menuPrompt: 'Menu prompt script',
-    whoUses: 'Who uses night button',
-    whenUsed: 'When it is used',
-    destination: 'Night destination',
-    needed: 'Voicemail needed',
-    perUser: 'Per-user voicemail',
-    generalMailbox: 'General / group mailbox',
-    emailNotification: 'Email notification',
-    retention: 'Message retention',
-    daytimePath: 'Daytime call path',
-    afterHoursPath: 'After-hours call path',
-    ringGroups: 'Ring groups',
-    queues: 'Queues',
-    failover: 'Failover path',
-    sipTrunks: 'SIP trunks',
-    pbx: 'PBX / platform',
-  }
-  return labels[field] || labelize(field)
-}
-
-function placeholderFor(section, field) {
-  const map = {
-    'autoAttendant.greeting': 'Thank you for calling...',
-    'autoAttendant.option1': 'Sales — ring group 200',
-    'autoAttendant.option2': 'Support — queue 300',
-    'autoAttendant.option0': 'Operator — ext 100',
-    'nightButton.destination': 'Night AA / after-hours mailbox',
-    'holidays.list': 'New Year’s Day, Memorial Day, July 4, Thanksgiving, Christmas...',
-    'callFlow.daytimePath': 'Main DID → AA → menu options',
-    'callFlow.afterHoursPath': 'Main DID → night greeting → mailbox / on-call',
-  }
-  return map[`${section}.${field}`] || ''
 }
 
 function loadDesign(jobId) {
@@ -696,16 +568,15 @@ function countMeaningfulDesignFields(design) {
   let filled = 0
   let total = 0
 
-  function walk(obj, parentKey = '') {
+  function walk(obj) {
     if (obj == null || typeof obj !== 'object') return
     Object.entries(obj).forEach(([key, value]) => {
       if (key === 'mainNumbers' || key === 'users' || key === 'surveyImport') return
       if (value != null && typeof value === 'object' && !Array.isArray(value)) {
-        walk(value, key)
+        walk(value)
         return
       }
       if (skipKeys.has(key) && (value === '' || value === 'Yes' || value === 'No')) {
-        // Still count if they explicitly set Yes/No as a decision? Only if non-empty AND we want credit
         if (value === 'Yes' || value === 'No') {
           total += 1
           filled += 1
@@ -722,22 +593,10 @@ function countMeaningfulDesignFields(design) {
   walk(omitArrays(design))
   const userRows = (design.users || []).filter(u => String(u.name || '').trim() || String(u.extension || '').trim() || String(u.did || '').trim())
   const numberRows = (design.mainNumbers || []).filter(n => String(n.number || '').trim() || String(n.label || '').trim())
-  // Treat lists as up to a soft target so empty stays 0%
   const listTotal = 2
   const listFilled = (userRows.length > 0 ? 1 : 0) + (numberRows.length > 0 ? 1 : 0)
   return {
     filled: filled + listFilled,
     total: Math.max(1, total + listTotal),
   }
-}
-
-function flattenValues(value) {
-  if (value == null || typeof value !== 'object') return [value]
-  return Object.values(value).flatMap(flattenValues)
-}
-
-function labelize(value) {
-  return value
-    .replace(/([A-Z])/g, ' $1')
-    .replace(/^./, c => c.toUpperCase())
 }

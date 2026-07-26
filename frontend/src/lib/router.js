@@ -48,7 +48,7 @@ function parseHash(hash) {
     const tool = segments[1] || 'calldiag'
     const groups = new Set(['reference', 'troubleshoot', 'config'])
     const singles = new Set([
-      'calldiag', 'yealink', 'symptom', 'ports', 'algo', 'quickcard', 'codec',
+      'calldiag', 'pcap', 'netcheck', 'router', 'yealink', 'symptom', 'ports', 'algo', 'quickcard', 'codec',
     ])
     if (groups.has(tool)) {
       name = `tools-${tool}`

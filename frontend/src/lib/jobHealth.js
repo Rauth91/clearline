@@ -261,3 +261,187 @@ export function focChipStatus(port, fallbackFocDate) {
   }
   return { status: 'info', label: `FOC in ${daysUntil}d`, daysUntil }
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+function daysUntilDate(iso, now = new Date()) {
+  if (!iso) return null
+  const target = new Date(`${String(iso).slice(0, 10)}T12:00:00`)
+  if (Number.isNaN(target.getTime())) return null
+  const today = new Date(now)
+  today.setHours(12, 0, 0, 0)
+  return Math.round((target.getTime() - today.getTime()) / DAY_MS)
+}
+
+function weekdayLabel(iso) {
+  const d = new Date(`${String(iso).slice(0, 10)}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('en-US', { weekday: 'long' })
+}
+
+function jobDate(job) {
+  return job?.cutover_date || job?.foc_date || ''
+}
+
+/**
+ * One status sentence for the home greeting.
+ * Priority: blockers > cutover/FOC within 7 days > jobs in flight > quiet.
+ *
+ * Jobs may include `blockerCount` (number of blocker-severity gaps).
+ *
+ * @param {Array<object>} jobs
+ * @param {{ display_name?: string }|null} _profile
+ * @param {{ now?: Date }} [opts]
+ * @returns {string}
+ */
+export function describeDay(jobs, _profile, opts = {}) {
+  const now = opts.now instanceof Date ? opts.now : new Date()
+  const list = Array.isArray(jobs) ? jobs : []
+  if (list.length === 0) return 'nothing due — all quiet.'
+
+  const weekJobs = list.filter((j) => {
+    const d = daysUntilDate(jobDate(j), now)
+    return d != null && d >= 0 && d <= 7
+  })
+
+  const blocked = list
+    .map(j => ({
+      job: j,
+      blockers: Math.max(0, Number(j.blockerCount) || 0),
+      days: daysUntilDate(jobDate(j), now),
+    }))
+    .filter(x => x.blockers > 0)
+    .sort((a, b) => {
+      if (b.blockers !== a.blockers) return b.blockers - a.blockers
+      if (a.days == null && b.days == null) return 0
+      if (a.days == null) return 1
+      if (b.days == null) return -1
+      return a.days - b.days
+    })
+
+  if (blocked.length > 0) {
+    const top = blocked[0]
+    const name = top.job.customer || 'A job'
+    const date = jobDate(top.job)
+    const inWeek = top.days != null && top.days >= 0 && top.days <= 7
+    const head = weekJobs.length > 0
+      ? `${weekJobs.length} job${weekJobs.length === 1 ? '' : 's'} this week`
+      : `${list.length} job${list.length === 1 ? '' : 's'} in flight`
+    const mid = inWeek && date
+      ? `${name} cuts over ${weekdayLabel(date)}`
+      : name
+    const n = top.blockers
+    return `${head} — ${mid}, and it has ${n} blocker${n === 1 ? '' : 's'}.`
+  }
+
+  if (weekJobs.length > 0) {
+    const sorted = [...weekJobs].sort((a, b) => {
+      const da = daysUntilDate(jobDate(a), now) ?? 99
+      const db = daysUntilDate(jobDate(b), now) ?? 99
+      return da - db
+    })
+    const top = sorted[0]
+    const name = top.customer || 'A job'
+    const day = weekdayLabel(jobDate(top))
+    const n = weekJobs.length
+    return `${n} job${n === 1 ? '' : 's'} this week — ${name} cuts over ${day}.`
+  }
+
+  const n = list.length
+  return `${n} job${n === 1 ? '' : 's'} in flight — nothing urgent due this week.`
+}
+
+/**
+ * Most urgent blocker across job health rows.
+ * @param {Array<{ job: object, actions: Array<{ severity: string, label: string, route: string }> }>} rows
+ * @param {{ now?: Date }} [opts]
+ * @returns {{ job: object, action: object, moreCount: number }|null}
+ */
+export function pickTopBlocker(rows, opts = {}) {
+  const now = opts.now instanceof Date ? opts.now : new Date()
+  const candidates = []
+  for (const row of rows || []) {
+    const blockers = (row.actions || []).filter(a => a.severity === 'blocker')
+    if (!blockers.length || !row.job) continue
+    const days = daysUntilDate(jobDate(row.job), now)
+    candidates.push({
+      job: row.job,
+      action: blockers[0],
+      blockerCount: blockers.length,
+      days: days == null ? 9999 : days,
+    })
+  }
+  if (!candidates.length) return null
+  candidates.sort((a, b) => {
+    if (a.days !== b.days) return a.days - b.days
+    return b.blockerCount - a.blockerCount
+  })
+  const top = candidates[0]
+  return {
+    job: top.job,
+    action: top.action,
+    moreCount: Math.max(0, candidates.length - 1),
+  }
+}
+
+export function greetingForHour(hour = new Date().getHours()) {
+  if (hour < 12) return 'Good morning'
+  if (hour < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
+/**
+ * One urgent line for toolkit-home jobs strip.
+ * Prefers a blocker; else nearest cutover/FOC; else most recently updated job.
+ *
+ * @param {Array<object>} jobs
+ * @param {Array<{ job: object, actions: Array<{ severity: string, label: string, route: string }> }>} healthRows
+ * @param {{ now?: Date }} [opts]
+ * @returns {{ label: string, route: string }|null}
+ */
+export function pickHomeUrgent(jobs, healthRows, opts = {}) {
+  const list = Array.isArray(jobs) ? jobs : []
+  if (!list.length) return null
+
+  const blocker = pickTopBlocker(healthRows, opts)
+  if (blocker) {
+    return {
+      label: `${blocker.job.customer || 'Job'} — ${blocker.action.label}`,
+      route: blocker.action.route,
+    }
+  }
+
+  const now = opts.now instanceof Date ? opts.now : new Date()
+  let nearest = null
+  for (const job of list) {
+    const days = daysUntilDate(jobDate(job), now)
+    if (days == null) continue
+    if (
+      !nearest
+      || Math.abs(days) < Math.abs(nearest.days)
+      || (Math.abs(days) === Math.abs(nearest.days) && days < nearest.days)
+    ) {
+      nearest = { job, days }
+    }
+  }
+  if (nearest) {
+    const when = nearest.days === 0
+      ? 'today'
+      : nearest.days > 0
+        ? `in ${nearest.days}d`
+        : `${Math.abs(nearest.days)}d ago`
+    const kind = nearest.job.cutover_date ? 'Cutover' : 'FOC'
+    return {
+      label: `${nearest.job.customer || 'Job'} — ${kind} ${when}`,
+      route: `/job/${nearest.job.id}`,
+    }
+  }
+
+  const recent = [...list].sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0]
+  return {
+    label: [recent.customer || 'Job', recent.site].filter(Boolean).join(' · '),
+    route: `/job/${recent.id}`,
+  }
+}
+
+

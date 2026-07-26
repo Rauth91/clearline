@@ -1,13 +1,13 @@
 /**
- * ClearLine IndexedDB — jobs, accounts, photos, outbox, meta.
+ * ClearLine IndexedDB — jobs, accounts, photos, firmware, outbox, meta.
  * Absorbs the former clearline-photos database.
  */
 
 const DB_NAME = 'clearline'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const LEGACY_PHOTOS_DB = 'clearline-photos'
 
-/** @type {IDBDatabase | null} */
+/** @type {Promise<IDBDatabase> | null} */
 let dbPromise = null
 
 function openDb() {
@@ -26,6 +26,9 @@ function openDb() {
       if (!db.objectStoreNames.contains('photos')) {
         const photos = db.createObjectStore('photos', { keyPath: 'id' })
         photos.createIndex('jobId', 'jobId', { unique: false })
+      }
+      if (!db.objectStoreNames.contains('firmware')) {
+        db.createObjectStore('firmware', { keyPath: 'id' })
       }
       if (!db.objectStoreNames.contains('outbox')) {
         const outbox = db.createObjectStore('outbox', { keyPath: 'id', autoIncrement: true })

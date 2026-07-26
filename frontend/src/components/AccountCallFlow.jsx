@@ -14,6 +14,7 @@ import {
   routeToDiagramDesign,
 } from '../lib/callFlowShape.js'
 import { makeId } from '../lib/surveyModel.js'
+import { FEATURES } from '../lib/features.js'
 
 const YES_NO = [
   { value: '', label: '—' },
@@ -188,7 +189,12 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
     const text = callFlowSummary(account)
     try {
       await navigator.clipboard.writeText(text)
-      setCopyNote({ type: 'ok', text: 'All routes copied — paste into Halo KB or a ticket note.' })
+      setCopyNote({
+        type: 'ok',
+        text: FEATURES.haloIntegration
+          ? 'All routes copied — paste into Halo KB or a ticket note.'
+          : 'All routes copied — paste into a note or runbook.',
+      })
     } catch {
       setCopyNote({ type: 'error', text: 'Could not copy. Expand the summary below and copy manually.' })
     }
@@ -227,7 +233,9 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
           <h1>{account.name || 'Untitled account'}</h1>
           <p>
             {account.site || 'Site TBD'}
-            {account.haloClientId ? ` · Halo ${account.haloClientId}` : ''}
+            {FEATURES.haloIntegration && account.haloClientId
+              ? ` · Halo ${account.haloClientId}`
+              : ''}
             {` · ${routes.length} route${routes.length === 1 ? '' : 's'}`}
           </p>
           <small className="job-updated">
@@ -323,14 +331,16 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
                 onChange={e => patchMeta({ site: e.target.value })}
               />
             </label>
-            <label className="field">
-              <span>Halo client ID</span>
-              <input
-                value={account.haloClientId}
-                onChange={e => patchMeta({ haloClientId: e.target.value })}
-                placeholder="For later KB sync"
-              />
-            </label>
+            {FEATURES.haloIntegration && (
+              <label className="field">
+                <span>Halo client ID</span>
+                <input
+                  value={account.haloClientId}
+                  onChange={e => patchMeta({ haloClientId: e.target.value })}
+                  placeholder="For later KB sync"
+                />
+              </label>
+            )}
             <label className="field">
               <span>Account number</span>
               <input
@@ -602,7 +612,11 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
         <div className="account-flow-chart">
           <CallFlowDiagram design={diagramDesign} />
           <details className="account-summary-preview">
-            <summary>Plain-text summary — all routes (Halo-ready)</summary>
+            <summary>
+              {FEATURES.haloIntegration
+                ? 'Plain-text summary — all routes (Halo-ready)'
+                : 'Plain-text summary — all routes'}
+            </summary>
             <pre className="account-summary-pre">{callFlowSummary(account)}</pre>
           </details>
         </div>

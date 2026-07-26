@@ -14,6 +14,8 @@ import AdminSettings from './components/AdminSettings.jsx'
 import JobPresence from './components/JobPresence.jsx'
 import JobActivity from './components/JobActivity.jsx'
 import JobCockpit from './components/JobCockpit.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
+import PwaUpdateBanner from './components/PwaUpdateBanner.jsx'
 import { OnboardingScreen, SignInScreen } from './components/AuthScreens.jsx'
 import {
   acknowledgeStorageVersionKeepData,
@@ -55,6 +57,9 @@ const CommandPalette = lazy(() => import('./components/CommandPalette.jsx'))
 // All seven tools — must remain directly reachable (do not drop)
 const YealinkCodes = lazy(() => import('./components/YealinkCodes.jsx'))
 const CallDiagnostic = lazy(() => import('./components/CallDiagnostic.jsx'))
+const PacketCapture = lazy(() => import('./components/PacketCapture.jsx'))
+const NetworkCheck = lazy(() => import('./components/NetworkCheck.jsx'))
+const RouterAdvisor = lazy(() => import('./components/RouterAdvisor.jsx'))
 const SymptomWizard = lazy(() => import('./components/SymptomWizard.jsx'))
 const PortChecklist = lazy(() => import('./components/PortChecklist.jsx'))
 const AlgoConfig = lazy(() => import('./components/AlgoConfig.jsx'))
@@ -69,12 +74,15 @@ const WORKSPACES = [
 
 const TOOLS = [
   { id: 'calldiag', label: 'Call Diagnostic' },
+  { id: 'pcap', label: 'Packet Capture' },
+  { id: 'netcheck', label: 'Network Check' },
   { id: 'yealink', label: 'Yealink Codes' },
   { id: 'symptom', label: 'Symptom Wizard' },
   { id: 'ports', label: 'Port Checklist' },
   { id: 'algo', label: 'Algo Config' },
   { id: 'quickcard', label: 'Quick Card' },
   { id: 'codec', label: 'Codec & QoS' },
+  { id: 'router', label: 'Router Advisor' },
 ]
 
 const TOOL_GROUPS = [
@@ -96,6 +104,9 @@ const TOOL_LABELS = {
   'tools-troubleshoot': 'Troubleshoot',
   'tools-config': 'Config',
   calldiag: 'Call Diagnostic',
+  pcap: 'Packet Capture',
+  netcheck: 'Network Check',
+  router: 'Router Advisor',
   yealink: 'Yealink Codes',
   symptom: 'Symptom Wizard',
   ports: 'Port Checklist',
@@ -449,6 +460,8 @@ export default function App() {
         </div>
       )}
 
+      <PwaUpdateBanner />
+
       {inJobSection && jobId && route.name !== 'runbook' && (
         <div className="app-nav-wrap">
           <nav className="workspace-tabs workspace-tabs-4" aria-label="Job sections">
@@ -480,7 +493,7 @@ export default function App() {
 
       {inTools && (
         <div className="app-nav-wrap">
-          <nav className="workspace-tabs tools-tabs-7" aria-label="Tools">
+          <nav className="workspace-tabs tools-tabs-10" aria-label="Tools">
             {TOOLS.map(tool => (
               <button
                 key={tool.id}
@@ -510,57 +523,68 @@ export default function App() {
 
       <main className="app-body" key={`${route.path}-${hubTick}`}>
         <div className="app-stage">
-          <Suspense fallback={<div className="workspace-loading">Loading…</div>}>
-            {route.name === 'home' && (
-              <HomeHub refreshKey={hubTick} profileId={profile?.id} />
-            )}
-            {route.name === 'jobs' && (
-              <JobsHub
-                refreshKey={hubTick}
-                filter={route.query.filter}
-                profileId={profile?.id}
-                autoOpenNew={route.query.new === '1'}
-              />
-            )}
-            {route.name === 'accounts' && (
-              <AccountsHub
-                refreshKey={hubTick}
-                onOpenAccount={(id) => {
-                  if (!id) {
-                    navigate('/accounts')
-                    setHubTick(t => t + 1)
-                    return
-                  }
-                  navigate(`/account/${id}`)
-                }}
-              />
-            )}
-            {route.name === 'account' && accountId && (
-              <>
-                <AccountDetail accountId={accountId} />
-              </>
-            )}
-            {route.name === 'settings' && (
-              <AdminSettings onBack={goHome} />
-            )}
-            {route.name === 'cockpit' && jobId && <JobCockpit jobId={jobId} />}
-            {route.name === 'survey' && jobId && <SiteSurvey jobId={jobId} />}
-            {route.name === 'design' && jobId && <SystemDesign jobId={jobId} />}
-            {route.name === 'golive' && jobId && <GoLive jobId={jobId} />}
-            {route.name === 'runbook' && jobId && (
-              <Runbook jobId={jobId} doneBy={profile?.display_name || ''} />
-            )}
-            {route.name === 'tool' && route.params.toolId === 'calldiag' && <CallDiagnostic />}
-            {route.name === 'tool' && route.params.toolId === 'yealink' && <YealinkCodes />}
-            {route.name === 'tool' && route.params.toolId === 'symptom' && <SymptomWizard />}
-            {route.name === 'tool' && route.params.toolId === 'ports' && <PortChecklist />}
-            {route.name === 'tool' && route.params.toolId === 'algo' && <AlgoConfig />}
-            {route.name === 'tool' && route.params.toolId === 'quickcard' && <QuickCard />}
-            {route.name === 'tool' && route.params.toolId === 'codec' && <CodecRef />}
-            {route.name === 'tools-reference' && <ToolsReference />}
-            {route.name === 'tools-troubleshoot' && <ToolsTroubleshoot />}
-            {route.name === 'tools-config' && <ToolsConfig tab={route.params.toolTab} />}
-          </Suspense>
+          <ErrorBoundary>
+            <Suspense fallback={<div className="workspace-loading">Loading…</div>}>
+              {route.name === 'home' && (
+                <HomeHub
+                  refreshKey={hubTick}
+                  profileId={profile?.id}
+                  profile={profile}
+                  onOpenSearch={() => setPaletteOpen(true)}
+                />
+              )}
+              {route.name === 'jobs' && (
+                <JobsHub
+                  refreshKey={hubTick}
+                  filter={route.query.filter}
+                  profileId={profile?.id}
+                  profile={profile}
+                  autoOpenNew={route.query.new === '1'}
+                />
+              )}
+              {route.name === 'accounts' && (
+                <AccountsHub
+                  refreshKey={hubTick}
+                  onOpenAccount={(id) => {
+                    if (!id) {
+                      navigate('/accounts')
+                      setHubTick(t => t + 1)
+                      return
+                    }
+                    navigate(`/account/${id}`)
+                  }}
+                />
+              )}
+              {route.name === 'account' && accountId && (
+                <>
+                  <AccountDetail accountId={accountId} />
+                </>
+              )}
+              {route.name === 'settings' && (
+                <AdminSettings onBack={goHome} />
+              )}
+              {route.name === 'cockpit' && jobId && <JobCockpit jobId={jobId} />}
+              {route.name === 'survey' && jobId && <SiteSurvey jobId={jobId} />}
+              {route.name === 'design' && jobId && <SystemDesign jobId={jobId} />}
+              {route.name === 'golive' && jobId && <GoLive jobId={jobId} />}
+              {route.name === 'runbook' && jobId && (
+                <Runbook jobId={jobId} doneBy={profile?.display_name || ''} />
+              )}
+              {route.name === 'tool' && route.params.toolId === 'calldiag' && <CallDiagnostic />}
+              {route.name === 'tool' && route.params.toolId === 'pcap' && <PacketCapture />}
+              {route.name === 'tool' && route.params.toolId === 'netcheck' && <NetworkCheck />}
+              {route.name === 'tool' && route.params.toolId === 'router' && <RouterAdvisor />}
+              {route.name === 'tool' && route.params.toolId === 'yealink' && <YealinkCodes />}
+              {route.name === 'tool' && route.params.toolId === 'symptom' && <SymptomWizard />}
+              {route.name === 'tool' && route.params.toolId === 'ports' && <PortChecklist />}
+              {route.name === 'tool' && route.params.toolId === 'algo' && <AlgoConfig />}
+              {route.name === 'tool' && route.params.toolId === 'quickcard' && <QuickCard />}
+              {route.name === 'tool' && route.params.toolId === 'codec' && <CodecRef />}
+              {route.name === 'tools-reference' && <ToolsReference tab={route.params.toolTab} />}
+              {route.name === 'tools-troubleshoot' && <ToolsTroubleshoot />}
+              {route.name === 'tools-config' && <ToolsConfig tab={route.params.toolTab} />}
+            </Suspense>
+          </ErrorBoundary>
         </div>
       </main>
 

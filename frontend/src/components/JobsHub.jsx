@@ -19,6 +19,9 @@ import {
 } from '../lib/jobModel.js'
 import { getAccount, listAccounts } from '../lib/accountModel.js'
 import { navigate } from '../lib/router.js'
+import { onDataChanged } from '../lib/dataEvents.js'
+import { FEATURES } from '../lib/features.js'
+import JobDayNarrative from './JobDayNarrative.jsx'
 
 const EMPTY_FORM = { customer: '', site: '', ticket: '', account_id: '' }
 
@@ -67,6 +70,7 @@ export default function JobsHub({
   defaultAccountId,
   filter: filterProp,
   profileId,
+  profile: profileProp,
   autoOpenNew = false,
 }) {
   const jobs = listJobs()
@@ -84,6 +88,21 @@ export default function JobsHub({
   const [tick, setTick] = useState(0)
   void refreshKey
   void tick
+
+  useEffect(() => onDataChanged((detail) => {
+    if (detail.kind !== 'job') return
+    const ids = detail.ids || []
+    if (!ids.length) return
+    try {
+      const current = listJobs()
+      if (!ids.some(id => current.some(j => j.id === id))) {
+        // New remote job not yet in local list index — still refresh hub
+        setTick(t => t + 1)
+        return
+      }
+    } catch { /* ignore */ }
+    setTick(t => t + 1)
+  }), [])
 
   useEffect(() => {
     if (filterProp === 'mine' || filterProp === 'unassigned' || filterProp === 'all') {
@@ -239,6 +258,15 @@ export default function JobsHub({
 
   return (
     <section className="jobs-hub">
+      {!FEATURES.jobFirstHome && (
+        <JobDayNarrative
+          profileId={profileId}
+          profile={profileProp || profile}
+          refreshKey={refreshKey}
+          variant="jobs"
+        />
+      )}
+
       <div className="design-hero hero-grid">
         <div>
           <div className="survey-kicker">Jobs</div>
@@ -329,7 +357,7 @@ export default function JobsHub({
             <article key={job.id} className="job-card">
               <button type="button" className="job-card-main" onClick={() => handleOpen(job)}>
                 <div className="job-card-top">
-                  <div className="survey-kicker">{job.ticket || 'Job'}</div>
+                  <div className="survey-kicker">Job</div>
                   <div className="job-card-meta-row">
                     <span className="job-stage-badge">{stageLabel}</span>
                     <span className="job-assignee-avatar" title={assigneeName || 'Unassigned'} aria-hidden="true">
@@ -451,14 +479,6 @@ export default function JobsHub({
                     value={form.site}
                     onChange={e => setForm(f => ({ ...f, site: e.target.value }))}
                     placeholder="HQ / Building A"
-                  />
-                </label>
-                <label className="field">
-                  <span>Ticket / project</span>
-                  <input
-                    value={form.ticket}
-                    onChange={e => setForm(f => ({ ...f, ticket: e.target.value }))}
-                    placeholder="Optional"
                   />
                 </label>
                 <div className="btn-row">

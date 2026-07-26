@@ -5,6 +5,9 @@ import {
   jobNextActions,
   surveyCompleteness,
   focChipStatus,
+  describeDay,
+  pickHomeUrgent,
+  greetingForHour,
 } from './jobHealth.js'
 import { computeVerdict } from './networkReadiness.js'
 
@@ -116,5 +119,95 @@ describe('jobHealth', () => {
     const iso = soon.toISOString().slice(0, 10)
     const chip = focChipStatus({ focDate: iso, focConfirmed: false })
     expect(chip.status).toBe('warn')
+  })
+})
+
+describe('describeDay', () => {
+  const now = new Date('2026-07-22T15:00:00') // Wednesday
+
+  it('empty state', () => {
+    expect(describeDay([], null, { now })).toBe('nothing due — all quiet.')
+  })
+
+  it('blocker present', () => {
+    const friday = '2026-07-24'
+    const sentence = describeDay([
+      {
+        id: '1',
+        customer: 'Acme Dental',
+        cutover_date: friday,
+        blockerCount: 1,
+      },
+      { id: '2', customer: 'Other', foc_date: '2026-07-25', blockerCount: 0 },
+    ], { display_name: 'Ryan' }, { now })
+    expect(sentence).toMatch(/2 jobs this week/i)
+    expect(sentence).toMatch(/Acme Dental cuts over Friday/i)
+    expect(sentence).toMatch(/1 blocker/i)
+  })
+
+  it('cutover this week without blockers', () => {
+    const sentence = describeDay([
+      { id: '1', customer: 'Acme Dental', cutover_date: '2026-07-24', blockerCount: 0 },
+      { id: '2', customer: 'Beta Shop', foc_date: '2026-07-25', blockerCount: 0 },
+    ], null, { now })
+    expect(sentence).toMatch(/2 jobs this week/i)
+    expect(sentence).toMatch(/Acme Dental cuts over Friday/i)
+    expect(sentence).not.toMatch(/blocker/i)
+  })
+
+  it('multiple jobs no blockers and nothing due this week', () => {
+    const sentence = describeDay([
+      { id: '1', customer: 'Far Out', cutover_date: '2026-08-20', blockerCount: 0 },
+      { id: '2', customer: 'Later Co', foc_date: '2026-09-01', blockerCount: 0 },
+    ], null, { now })
+    expect(sentence).toMatch(/2 jobs in flight/i)
+    expect(sentence).toMatch(/nothing urgent due this week/i)
+  })
+})
+
+describe('greetingForHour', () => {
+  it('returns time-of-day greeting without a name', () => {
+    expect(greetingForHour(9)).toBe('Good morning')
+    expect(greetingForHour(14)).toBe('Good afternoon')
+    expect(greetingForHour(20)).toBe('Good evening')
+  })
+})
+
+describe('pickHomeUrgent', () => {
+  const now = new Date('2026-07-22T15:00:00')
+
+  it('returns null when there are no jobs', () => {
+    expect(pickHomeUrgent([], [])).toBeNull()
+  })
+
+  it('prefers a blocker over nearest cutover', () => {
+    const jobs = [
+      { id: 'a', customer: 'Acme', cutover_date: '2026-07-23' },
+      { id: 'b', customer: 'Blocked Co', cutover_date: '2026-07-28' },
+    ]
+    const urgent = pickHomeUrgent(jobs, [
+      { job: jobs[0], actions: [{ severity: 'warn', label: 'Fill survey', route: '/job/a/survey' }] },
+      {
+        job: jobs[1],
+        actions: [{ severity: 'blocker', label: 'Confirm FOC', route: '/job/b' }],
+      },
+    ], { now })
+    expect(urgent.label).toMatch(/Blocked Co/)
+    expect(urgent.label).toMatch(/Confirm FOC/)
+    expect(urgent.route).toBe('/job/b')
+  })
+
+  it('falls back to nearest cutover/FOC', () => {
+    const jobs = [
+      { id: 'a', customer: 'Acme', cutover_date: '2026-07-24' },
+      { id: 'b', customer: 'Beta', foc_date: '2026-07-30' },
+    ]
+    const urgent = pickHomeUrgent(jobs, [
+      { job: jobs[0], actions: [] },
+      { job: jobs[1], actions: [] },
+    ], { now })
+    expect(urgent.label).toMatch(/Acme/)
+    expect(urgent.label).toMatch(/Cutover/)
+    expect(urgent.route).toBe('/job/a')
   })
 })

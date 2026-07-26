@@ -12,6 +12,7 @@ import {
 } from '../lib/jobModel.js'
 import { getAccount, listAccounts } from '../lib/accountModel.js'
 import { navigate } from '../lib/router.js'
+import { canApplyRemoteRefresh, onDataChanged } from '../lib/dataEvents.js'
 
 const TABS = [
   { id: 'flow', label: 'Call flow' },
@@ -36,6 +37,24 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
     setJobs(listJobsForAccount(accountId))
     setTab('flow')
   }, [accountId, refreshKey])
+
+  useEffect(() => {
+    if (!accountId) return undefined
+    return onDataChanged(async (detail) => {
+      const ids = detail.ids || []
+      if (detail.kind === 'account' && ids.includes(accountId)) {
+        const ok = await canApplyRemoteRefresh(accountId)
+        if (!ok) return
+        setAccount(getAccount(accountId))
+        return
+      }
+      if (detail.kind === 'job') {
+        const related = listJobsForAccount(accountId)
+        if (!ids.some(id => related.some(j => j.id === id))) return
+        setJobs(listJobsForAccount(accountId))
+      }
+    })
+  }, [accountId])
 
   useEffect(() => {
     if (!showNewJob) return undefined
@@ -157,7 +176,7 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
                     }}
                   >
                     <div className="job-card-top">
-                      <div className="survey-kicker">{job.ticket || 'Job'}</div>
+                      <div className="survey-kicker">Job</div>
                       <span className="job-stage-badge">{STAGE_LABELS[job.stage] || 'Survey'}</span>
                     </div>
                     <h2>{job.customer || 'Untitled customer'}</h2>
@@ -204,14 +223,6 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
                   <input
                     value={form.site}
                     onChange={e => setForm(f => ({ ...f, site: e.target.value }))}
-                  />
-                </label>
-                <label className="field">
-                  <span>Ticket / project</span>
-                  <input
-                    value={form.ticket}
-                    onChange={e => setForm(f => ({ ...f, ticket: e.target.value }))}
-                    placeholder="Optional"
                   />
                 </label>
                 <div className="btn-row">

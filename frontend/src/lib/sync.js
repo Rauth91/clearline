@@ -14,7 +14,13 @@ import {
   getCachedProfile,
   getSession,
 } from './authModel.js'
-import { getJobPhotos, putJobPhotos, stripPhotoDataUrls } from './photoStore.js'
+import { getJobPhotos, putJobPhotos, stripPhotoDataUrls, dataUrlToBlob } from './photoStore.js'
+import { emitDataChanged } from './dataEvents.js'
+import {
+  getFirmwareRef,
+  upsertRemoteFirmware,
+  writeFirmwareLocal,
+} from './firmwareModel.js'
 import {
   getAccountRecordAny,
   getJobRecordAny,
@@ -176,17 +182,6 @@ function schedulePush(delay = PUSH_DEBOUNCE_MS) {
     _pushTimer = null
     pushOutbox().catch((err) => console.error(err))
   }, delay)
-}
-
-function dataUrlToBlob(dataUrl) {
-  const parts = String(dataUrl).split(',')
-  const header = parts[0] || ''
-  const b64 = parts[1] || ''
-  const mime = header.match(/:(.*?);/)?.[1] || 'image/jpeg'
-  const bin = atob(b64)
-  const arr = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i += 1) arr[i] = bin.charCodeAt(i)
-  return new Blob([arr], { type: mime })
 }
 
 function errMessage(err) {
@@ -438,13 +433,20 @@ async function handlePhotoUpload(sb, entry, profile) {
   const photos = await getJobPhotos(jobId)
   const remaining = []
   for (const photo of photos) {
-    if (!photo?.dataUrl) {
+    let blob = photo?.blob || null
+    if (!blob && photo?.dataUrl) {
+      try {
+        blob = dataUrlToBlob(photo.dataUrl)
+      } catch {
+        blob = null
+      }
+    }
+    if (!blob) {
       remaining.push(photo)
       continue
     }
     const photoId = photo.id || crypto.randomUUID()
     const path = `${profile.org_id}/${jobId}/${photoId}.jpg`
-    const blob = dataUrlToBlob(photo.dataUrl)
     const { error: upErr } = await sb.storage.from('job-photos').upload(path, blob, {
       contentType: blob.type || 'image/jpeg',
       upsert: true,
@@ -472,6 +474,52 @@ async function handlePhotoUpload(sb, entry, profile) {
   await deleteOutbox(entry.id)
 }
 
+async function handleFirmwareUpsert(sb, entry, profile) {
+  const id = entry.entityId || entry.payload?.id
+  const ref = id ? await getFirmwareRef(id) : null
+  if (!ref?.model) {
+    await deleteOutbox(entry.id)
+    return
+  }
+
+  const row = {
+    org_id: profile.org_id,
+    model: ref.model,
+    family: ref.family || null,
+    certified_version: ref.certified_version || null,
+    platform: ref.platform || null,
+    notes: ref.notes || null,
+    eol: Boolean(ref.eol),
+    support_url: ref.support_url || null,
+  }
+  if (isUuid(ref.id)) row.id = ref.id
+
+  const { data, error } = await sb
+    .from('firmware_refs')
+    .upsert(row, { onConflict: 'org_id,model' })
+    .select()
+    .single()
+
+  if (error) throw error
+
+  if (data) {
+    await writeFirmwareLocal({
+      ...ref,
+      id: data.id,
+      org_id: data.org_id || profile.org_id,
+      updated_at: data.updated_at || ref.updated_at,
+      updated_by: data.updated_by ?? ref.updated_by,
+      certified_version: data.certified_version ?? ref.certified_version,
+      platform: data.platform ?? ref.platform,
+      notes: data.notes ?? ref.notes,
+      eol: data.eol ?? ref.eol,
+      family: data.family ?? ref.family,
+      support_url: data.support_url ?? ref.support_url,
+    })
+  }
+  await deleteOutbox(entry.id)
+}
+
 async function processOutboxEntry(sb, entry, profile) {
   switch (entry.type) {
     case 'job.create':
@@ -490,6 +538,8 @@ async function processOutboxEntry(sb, entry, profile) {
       return handleAccountSoftDelete(sb, entry)
     case 'photo.upload':
       return handlePhotoUpload(sb, entry, profile)
+    case 'firmware.upsert':
+      return handleFirmwareUpsert(sb, entry, profile)
     default:
       console.warn('Unknown outbox type', entry.type)
       await deleteOutbox(entry.id)
@@ -571,31 +621,43 @@ export async function pullRemote() {
     let jobsQuery = sb.from('jobs').select('*').eq('org_id', profile.org_id)
     let accountsQuery = sb.from('accounts').select('*').eq('org_id', profile.org_id)
     let photosQuery = sb.from('photos').select('id, org_id, job_id, storage_path, caption, category, created_at, created_by').eq('org_id', profile.org_id)
+    let firmwareQuery = sb.from('firmware_refs').select('*').eq('org_id', profile.org_id)
 
     if (lastSyncAt) {
       jobsQuery = jobsQuery.gt('updated_at', lastSyncAt)
       accountsQuery = accountsQuery.gt('updated_at', lastSyncAt)
       photosQuery = photosQuery.gt('created_at', lastSyncAt)
+      firmwareQuery = firmwareQuery.gt('updated_at', lastSyncAt)
     }
 
-    const [jobsRes, accountsRes, photosRes] = await Promise.all([
+    const [jobsRes, accountsRes, photosRes, firmwareRes] = await Promise.all([
       jobsQuery,
       accountsQuery,
       photosQuery,
+      firmwareQuery,
     ])
 
     if (jobsRes.error) throw jobsRes.error
     if (accountsRes.error) throw accountsRes.error
     if (photosRes.error) throw photosRes.error
+    // Firmware table may not exist until migration 0002 runs — don't fail the whole pull
+    if (firmwareRes.error) {
+      console.warn('Firmware pull skipped', firmwareRes.error)
+    }
+
+    const changedJobIds = []
+    const changedAccountIds = []
+    const changedFirmwareIds = []
 
     for (const row of jobsRes.data || []) {
-      await upsertRemoteJob(row)
+      if (await upsertRemoteJob(row)) changedJobIds.push(row.id)
     }
     for (const row of accountsRes.data || []) {
-      await upsertRemoteAccount(row)
+      if (await upsertRemoteAccount(row)) changedAccountIds.push(row.id)
     }
 
     // Merge photo metadata into local bundles (do not overwrite pending uploads)
+    const photoJobIds = new Set()
     for (const row of photosRes.data || []) {
       if (!row.job_id) continue
       const pending = await pendingOutboxFor(row.job_id)
@@ -613,6 +675,37 @@ export async function pullRemote() {
           storage_path: row.storage_path,
         },
       ])
+      photoJobIds.add(row.job_id)
+    }
+
+    for (const id of photoJobIds) {
+      if (!changedJobIds.includes(id)) changedJobIds.push(id)
+    }
+
+    if (!firmwareRes.error) {
+      const outbox = await listOutbox()
+      const pendingFwModels = new Set(
+        outbox
+          .filter(e => e.type === 'firmware.upsert' && e.status === 'pending')
+          .map(e => String(e.payload?.model || '').toUpperCase())
+          .filter(Boolean),
+      )
+      for (const row of firmwareRes.data || []) {
+        const pending = await pendingOutboxFor(row.id)
+        if (pending.some(e => e.type === 'firmware.upsert')) continue
+        if (pendingFwModels.has(String(row.model || '').toUpperCase())) continue
+        if (await upsertRemoteFirmware(row)) changedFirmwareIds.push(row.id)
+      }
+    }
+
+    if (changedJobIds.length) {
+      emitDataChanged({ kind: 'job', ids: changedJobIds })
+    }
+    if (changedAccountIds.length) {
+      emitDataChanged({ kind: 'account', ids: changedAccountIds })
+    }
+    if (changedFirmwareIds.length) {
+      emitDataChanged({ kind: 'firmware', ids: changedFirmwareIds })
     }
 
     await setMeta(LAST_SYNC_KEY, pullStarted)
@@ -653,6 +746,11 @@ function ensureRealtime(orgId) {
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'accounts', filter: `org_id=eq.${orgId}` },
+      () => { pullRemote().catch((err) => console.error(err)) },
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'firmware_refs', filter: `org_id=eq.${orgId}` },
       () => { pullRemote().catch((err) => console.error(err)) },
     )
     .subscribe()

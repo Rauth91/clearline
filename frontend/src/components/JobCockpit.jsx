@@ -18,6 +18,7 @@ import {
 import { analyzeReadiness, computeVerdict } from '../lib/networkReadiness.js'
 import { navigate } from '../lib/router.js'
 import { getAccount } from '../lib/accountModel.js'
+import { canApplyRemoteRefresh, onDataChanged } from '../lib/dataEvents.js'
 
 function e911Chip(survey, golive) {
   const locs = survey?.e911Locations || []
@@ -43,6 +44,17 @@ export default function JobCockpit({ jobId, refreshKey }) {
 
   useEffect(() => {
     if (jobId) openJob(jobId)
+  }, [jobId])
+
+  useEffect(() => {
+    if (!jobId) return undefined
+    return onDataChanged(async (detail) => {
+      if (detail.kind !== 'job') return
+      if (!(detail.ids || []).includes(jobId)) return
+      const ok = await canApplyRemoteRefresh(jobId)
+      if (!ok) return
+      setTick(t => t + 1)
+    })
   }, [jobId])
 
   const account = job?.account_id ? getAccount(job.account_id) : null
@@ -96,6 +108,11 @@ export default function JobCockpit({ jobId, refreshKey }) {
             <span className="job-cockpit-sep"> — </span>
             {job.site || 'Site TBD'}
           </h1>
+          {String(job.ticket || '').trim() ? (
+            <span className="job-ticket-chip">
+              Ticket #{String(job.ticket).trim().replace(/^#\s*/, '')}
+            </span>
+          ) : null}
           <p>
             {seats} seat{seats === 1 ? '' : 's'}
             {` · Cutover ${cutover}`}

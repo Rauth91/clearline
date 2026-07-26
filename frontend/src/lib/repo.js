@@ -26,7 +26,9 @@ import {
   clearAllJobPhotos,
   deleteJobPhotos,
   getJobPhotos,
+  hydrateSurveyPhotosForExport,
   photosHaveDataUrls,
+  photosHavePayload,
   putJobPhotos,
   stripPhotoDataUrls,
 } from './photoStore.js'
@@ -55,7 +57,7 @@ export function onRepoWrite(fn) {
   _onWrite = fn
 }
 
-function notifySyncNeeded() {
+export function notifySyncNeeded() {
   if (typeof _onWrite === 'function') {
     try {
       _onWrite()
@@ -90,7 +92,7 @@ function accountKey(accountId) {
 
 function photosFingerprint(photos) {
   return (photos || [])
-    .map(p => `${p.id}|${p.name || ''}|${p.caption || ''}|${p.category || ''}|${p.dataUrl ? 1 : 0}`)
+    .map(p => `${p.id}|${p.name || ''}|${p.caption || ''}|${p.category || ''}|${p.dataUrl || p.blob ? 1 : 0}|${p.storage_path || ''}`)
     .join(';')
 }
 
@@ -731,10 +733,10 @@ export async function loadJobSurveyAsync(jobId) {
         _jobsCache.set(jobId, next)
         await idbPut('jobs', next)
       }
-      return { ...lean, photos }
+      return lean
     }
     if (photos.length > 0) {
-      return { ...survey, photos }
+      return { ...survey, photos: stripPhotoDataUrls(photos) }
     }
   } catch (err) {
     console.error(err)
@@ -743,15 +745,22 @@ export async function loadJobSurveyAsync(jobId) {
       message: 'Could not load site photos from device storage. Survey text still loaded.',
     })
   }
-  return survey
+  return { ...survey, photos: stripPhotoDataUrls(survey.photos || []) }
 }
 
 async function mergePhotosForStore(jobId, leanPhotos) {
   const existing = await getJobPhotos(jobId)
   const byId = new Map((existing || []).map(p => [p.id, p]))
-  return leanPhotos.map(p => {
+  return leanPhotos.map((p) => {
     const prev = byId.get(p.id)
-    return prev?.dataUrl ? { ...prev, ...p, dataUrl: prev.dataUrl } : p
+    if (!prev) return p
+    return {
+      ...prev,
+      ...stripPhotoDataUrls([p])[0],
+      blob: p.blob || prev.blob,
+      dataUrl: p.dataUrl || prev.dataUrl,
+      storage_path: p.storage_path || prev.storage_path,
+    }
   })
 }
 
@@ -768,8 +777,8 @@ export async function saveJobSurvey(jobId, survey) {
 
   if (photosChanged) {
     try {
-      if (photosHaveDataUrls(photos)) {
-        await putJobPhotos(jobId, photos)
+      if (photosHavePayload(photos)) {
+        await putJobPhotos(jobId, await mergePhotosForStore(jobId, photos))
       } else if (photos.length === 0) {
         await putJobPhotos(jobId, [])
       } else {
@@ -959,7 +968,8 @@ export function exportJobFile(jobId) {
 export async function exportJobFileAsync(jobId) {
   const meta = getJob(jobId)
   if (!meta) throw new Error('Job not found')
-  const survey = await loadJobSurveyAsync(jobId)
+  const surveyLean = await loadJobSurveyAsync(jobId)
+  const survey = await hydrateSurveyPhotosForExport(jobId, surveyLean)
   const payload = {
     format: 'clearline-job',
     version: 1,

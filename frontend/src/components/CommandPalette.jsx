@@ -17,6 +17,9 @@ const ROUTES = [
   { id: 'route-accounts', label: 'Accounts', path: '/accounts', keywords: ['accounts', 'call flow'] },
   { id: 'route-settings', label: 'Settings', path: '/settings', keywords: ['settings', 'admin'] },
   { id: 'route-calldiag', label: 'Call Diagnostic', path: '/tools/calldiag', keywords: ['tools', 'sip', 'ladder', 'netsapiens'] },
+  { id: 'route-pcap', label: 'Packet Capture', path: '/tools/pcap', keywords: ['tools', 'pcap', 'wireshark', 'rtp', 'capture'] },
+  { id: 'route-netcheck', label: 'Network Check', path: '/tools/netcheck', keywords: ['tools', 'network', 'visualware', 'jitter', 'mos', 'nat'] },
+  { id: 'route-router', label: 'Router Advisor', path: '/tools/router', keywords: ['tools', 'router', 'firewall', 'sip alg', 'qos', 'meraki', 'cisco'] },
   { id: 'route-yealink', label: 'Yealink Codes', path: '/tools/yealink', keywords: ['tools', 'yealink', 'codes'] },
   { id: 'route-symptom', label: 'Symptom Wizard', path: '/tools/symptom', keywords: ['tools', 'troubleshoot', 'wizard'] },
   { id: 'route-ports', label: 'Port Checklist', path: '/tools/ports', keywords: ['tools', 'firewall', 'ports'] },
@@ -49,9 +52,12 @@ function buildItems(query) {
   try {
     for (const job of listJobs()) {
       const label = job.customer || 'Untitled job'
-      const subtitle = [job.site, job.ticket].filter(Boolean).join(' · ')
+      const subtitle = job.site || ''
       const score = q
-        ? scoreText(label, q) * 2 + scoreText(subtitle, q) + scoreText(job.id, q)
+        ? scoreText(label, q) * 2
+          + scoreText(subtitle, q)
+          + scoreText(job.ticket, q)
+          + scoreText(job.id, q)
         : 1
       if (!q || score > 0) {
         items.push({

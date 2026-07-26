@@ -1,11 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import SurveyPhotos from './SurveyPhotos.jsx'
-import TopologyEditor from './TopologyEditor.jsx'
-import E911Section from './E911Section.jsx'
 import {
   NETWORK_RUN_COUNT,
-  QUALITY_THRESHOLDS,
   VISUALWARE_SAMPLE_REPORT,
   analyzeReadiness,
   networkRunProgress,
@@ -22,7 +18,19 @@ import {
   makeId,
 } from '../lib/surveyModel.js'
 import { loadJobSurveyAsync, saveJobSurvey } from '../lib/jobModel.js'
+import { hydrateSurveyPhotosForExport } from '../lib/photoStore.js'
+import { canApplyRemoteRefresh, onDataChanged } from '../lib/dataEvents.js'
+import { registerWorkspaceFlush } from '../lib/reloadGate.js'
 import { ConflictBanner } from './ConflictReview.jsx'
+import {
+  SurveyE911Panel,
+  SurveyNetworkPanel,
+  SurveyNumbersPanel,
+  SurveyPhotosPanel,
+  SurveySitePanel,
+  SurveyTopologyPanel,
+  SurveyUsersPanel,
+} from './surveyPanels.jsx'
 
 const TOOLS = [
   {
@@ -48,8 +56,6 @@ const PANELS = [
   ['photos', 'Photos', 'MDF, IDF, cabling, and site evidence'],
 ]
 
-const MAIN_NUMBER_PRESETS = ['Main line', 'Fax', 'Toll-free', 'Auto-attendant']
-
 export default function SiteSurvey({ jobId }) {
   const [survey, setSurvey] = useState(() => createEmptySurvey())
   const [ready, setReady] = useState(false)
@@ -59,6 +65,7 @@ export default function SiteSurvey({ jobId }) {
   const [speedRun, setSpeedRun] = useState(0)
   const [mcRun, setMcRun] = useState(0)
   const importRef = useRef(null)
+  const dirtyRef = useRef(false)
   const readiness = useMemo(
     () => analyzeReadiness(survey),
     [survey.speedtests, survey.visualwareRuns, survey.phoneCount],
@@ -71,6 +78,7 @@ export default function SiteSurvey({ jobId }) {
     setActivePanel(null)
     setSpeedRun(0)
     setMcRun(0)
+    dirtyRef.current = false
     loadJobSurveyAsync(jobId).then((data) => {
       if (cancelled) return
       setSurvey(normalizeNetworkSurvey(data))
@@ -86,14 +94,34 @@ export default function SiteSurvey({ jobId }) {
     if (!jobId || !ready) return undefined
     const t = setTimeout(() => {
       saveJobSurvey(jobId, latestSurvey.current)
+      dirtyRef.current = false
     }, 450)
     return () => clearTimeout(t)
   }, [survey, jobId, ready])
 
-  // Flush pending edits when leaving the job / unmounting
   useEffect(() => () => {
     if (jobId && ready) saveJobSurvey(jobId, latestSurvey.current)
   }, [jobId, ready])
+
+  useEffect(() => {
+    if (!jobId || !ready) return undefined
+    return registerWorkspaceFlush(() => {
+      saveJobSurvey(jobId, latestSurvey.current)
+    })
+  }, [jobId, ready])
+
+  useEffect(() => {
+    if (!jobId) return undefined
+    return onDataChanged(async (detail) => {
+      if (detail.kind !== 'job') return
+      if (!(detail.ids || []).includes(jobId)) return
+      if (dirtyRef.current) return
+      const ok = await canApplyRemoteRefresh(jobId)
+      if (!ok) return
+      const data = await loadJobSurveyAsync(jobId)
+      setSurvey(normalizeNetworkSurvey(data))
+    })
+  }, [jobId])
 
   useEffect(() => {
     if (!activePanel) return undefined
@@ -127,105 +155,132 @@ export default function SiteSurvey({ jobId }) {
 
   const panelIndex = activePanel ? PANELS.findIndex(([id]) => id === activePanel) : -1
 
-  function updateSurvey(patch) {
-    setSurvey(prev => ({ ...prev, ...patch, updatedAt: new Date().toISOString() }))
-  }
+  const patchSurvey = useCallback((updater) => {
+    dirtyRef.current = true
+    setSurvey((prev) => {
+      const patch = typeof updater === 'function' ? updater(prev) : updater
+      return { ...prev, ...patch, updatedAt: new Date().toISOString() }
+    })
+  }, [])
 
-  function updateCustomer(field, value) {
-    updateSurvey({ customer: { ...survey.customer, [field]: value } })
-  }
+  const onSiteField = useCallback((field, value) => {
+    patchSurvey({ [field]: value })
+  }, [patchSurvey])
 
-  function updateSpeedtest(index, field, value) {
-    const speedtests = [...(survey.speedtests || [])]
-    while (speedtests.length < NETWORK_RUN_COUNT) speedtests.push({})
-    speedtests[index] = { ...speedtests[index], [field]: value }
-    updateSurvey({ speedtests })
-  }
+  const onCustomerField = useCallback((field, value) => {
+    patchSurvey(prev => ({ customer: { ...prev.customer, [field]: value } }))
+  }, [patchSurvey])
 
-  function updateVisualware(index, field, value) {
-    const visualwareRuns = [...(survey.visualwareRuns || [])]
-    while (visualwareRuns.length < NETWORK_RUN_COUNT) visualwareRuns.push({})
-    visualwareRuns[index] = { ...visualwareRuns[index], [field]: value }
-    updateSurvey({ visualwareRuns })
-  }
+  const onUpdateSpeedtest = useCallback((index, field, value) => {
+    patchSurvey((prev) => {
+      const speedtests = [...(prev.speedtests || [])]
+      while (speedtests.length < NETWORK_RUN_COUNT) speedtests.push({})
+      speedtests[index] = { ...speedtests[index], [field]: value }
+      return { speedtests }
+    })
+  }, [patchSurvey])
 
-  function parseReport(index = mcRun, text) {
-    const run = survey.visualwareRuns?.[index] || {}
+  const onUpdateVisualware = useCallback((index, field, value) => {
+    patchSurvey((prev) => {
+      const visualwareRuns = [...(prev.visualwareRuns || [])]
+      while (visualwareRuns.length < NETWORK_RUN_COUNT) visualwareRuns.push({})
+      visualwareRuns[index] = { ...visualwareRuns[index], [field]: value }
+      return { visualwareRuns }
+    })
+  }, [patchSurvey])
+
+  const parseReport = useCallback((index = mcRun, text) => {
+    const run = latestSurvey.current.visualwareRuns?.[index] || {}
     const paste = text ?? run.rawPaste
     const { data, matched } = parseVisualwareReport(paste)
     if (!matched) {
       setParseNote({ type: 'error', text: `Could not find MyConnection metrics in run ${index + 1}.` })
       return
     }
-    const visualwareRuns = [...(survey.visualwareRuns || [])]
-    while (visualwareRuns.length < NETWORK_RUN_COUNT) visualwareRuns.push({})
-    visualwareRuns[index] = { ...visualwareRuns[index], ...data, rawPaste: paste }
-    updateSurvey({
-      visualwareRuns,
-      phoneCount: data.callsSimulated || survey.phoneCount,
+    patchSurvey((prev) => {
+      const visualwareRuns = [...(prev.visualwareRuns || [])]
+      while (visualwareRuns.length < NETWORK_RUN_COUNT) visualwareRuns.push({})
+      visualwareRuns[index] = { ...visualwareRuns[index], ...data, rawPaste: paste }
+      return {
+        visualwareRuns,
+        phoneCount: data.callsSimulated || prev.phoneCount,
+      }
     })
     setParseNote({ type: 'ok', text: `Parsed ${matched} field(s) into MyConnection run ${index + 1}.` })
-  }
+  }, [mcRun, patchSurvey])
 
-  function loadVisualwareSample() {
+  const loadVisualwareSample = useCallback(() => {
     parseReport(mcRun, VISUALWARE_SAMPLE_REPORT)
-  }
+  }, [mcRun, parseReport])
+
+  const addUser = useCallback(() => {
+    patchSurvey(prev => ({
+      users: [...prev.users, emptySurveyUser()],
+      phoneCount: String(Math.max(Number(prev.phoneCount || 0), prev.users.length + 1)),
+    }))
+  }, [patchSurvey])
+
+  const addUsers = useCallback((count) => {
+    const nextUsers = Array.from({ length: count }, () => emptySurveyUser())
+    patchSurvey(prev => ({
+      users: [...prev.users, ...nextUsers],
+      phoneCount: String(Math.max(Number(prev.phoneCount || 0), prev.users.length + count)),
+    }))
+  }, [patchSurvey])
+
+  const updateUser = useCallback((id, field, value) => {
+    patchSurvey(prev => ({
+      users: prev.users.map(u => (u.id === id ? { ...u, [field]: value } : u)),
+    }))
+  }, [patchSurvey])
+
+  const removeUser = useCallback((id) => {
+    patchSurvey(prev => ({ users: prev.users.filter(u => u.id !== id) }))
+  }, [patchSurvey])
+
+  const addMainNumber = useCallback(() => {
+    patchSurvey(prev => ({
+      mainNumbers: [...(prev.mainNumbers || []), { id: makeId(), label: '', number: '', notes: '' }],
+    }))
+  }, [patchSurvey])
+
+  const addMainNumberPreset = useCallback((label) => {
+    patchSurvey(prev => ({
+      mainNumbers: [...(prev.mainNumbers || []), { id: makeId(), label, number: '', notes: '' }],
+    }))
+  }, [patchSurvey])
+
+  const updateMainNumber = useCallback((id, field, value) => {
+    patchSurvey(prev => ({
+      mainNumbers: (prev.mainNumbers || []).map(m => (m.id === id ? { ...m, [field]: value } : m)),
+    }))
+  }, [patchSurvey])
+
+  const removeMainNumber = useCallback((id) => {
+    patchSurvey(prev => ({
+      mainNumbers: (prev.mainNumbers || []).filter(m => m.id !== id),
+    }))
+  }, [patchSurvey])
+
+  const onE911Change = useCallback((patch) => {
+    patchSurvey(patch)
+  }, [patchSurvey])
+
+  const onTopologyChange = useCallback((topology) => {
+    patchSurvey({ topology })
+  }, [patchSurvey])
+
+  const onPhotosChange = useCallback((photos) => {
+    patchSurvey({ photos })
+  }, [patchSurvey])
 
   function startNew() {
     if (!confirm('Clear this site survey and start a new one for this job?')) return
+    dirtyRef.current = true
     const blank = createEmptySurvey()
     setSurvey(blank)
     setParseNote(null)
     setActivePanel(null)
-  }
-
-  function addUser() {
-    updateSurvey({
-      users: [...survey.users, newUser()],
-      phoneCount: String(Math.max(Number(survey.phoneCount || 0), survey.users.length + 1)),
-    })
-  }
-
-  function addUsers(count) {
-    const nextUsers = Array.from({ length: count }, () => newUser())
-    updateSurvey({
-      users: [...survey.users, ...nextUsers],
-      phoneCount: String(Math.max(Number(survey.phoneCount || 0), survey.users.length + count)),
-    })
-  }
-
-  function updateUser(id, field, value) {
-    updateSurvey({
-      users: survey.users.map(u => u.id === id ? { ...u, [field]: value } : u),
-    })
-  }
-
-  function removeUser(id) {
-    updateSurvey({ users: survey.users.filter(u => u.id !== id) })
-  }
-
-  const mainNumbers = survey.mainNumbers || []
-
-  function addMainNumber() {
-    updateSurvey({
-      mainNumbers: [...mainNumbers, { id: makeId(), label: '', number: '', notes: '' }],
-    })
-  }
-
-  function addMainNumberPreset(label) {
-    updateSurvey({
-      mainNumbers: [...mainNumbers, { id: makeId(), label, number: '', notes: '' }],
-    })
-  }
-
-  function updateMainNumber(id, field, value) {
-    updateSurvey({
-      mainNumbers: mainNumbers.map(m => m.id === id ? { ...m, [field]: value } : m),
-    })
-  }
-
-  function removeMainNumber(id) {
-    updateSurvey({ mainNumbers: mainNumbers.filter(m => m.id !== id) })
   }
 
   async function importJson(file) {
@@ -233,6 +288,7 @@ export default function SiteSurvey({ jobId }) {
     try {
       const text = await file.text()
       const parsed = JSON.parse(text)
+      dirtyRef.current = true
       setSurvey({ ...createEmptySurvey(), ...parsed, updatedAt: new Date().toISOString() })
       setParseNote({ type: 'ok', text: 'Imported survey JSON.' })
     } catch {
@@ -248,13 +304,29 @@ export default function SiteSurvey({ jobId }) {
     }
     setExportingPdf(true)
     try {
-      await downloadPdfReport(survey, readiness)
+      const hydrated = await hydrateSurveyPhotosForExport(jobId, latestSurvey.current)
+      await downloadPdfReport(hydrated, analyzeReadiness(hydrated))
     } catch (err) {
       console.error(err)
       alert('Could not create the PDF. Try Export HTML as a backup.')
     } finally {
       setExportingPdf(false)
     }
+  }
+
+  async function exportWord() {
+    const hydrated = await hydrateSurveyPhotosForExport(jobId, latestSurvey.current)
+    exportEditableDoc(hydrated, analyzeReadiness(hydrated))
+  }
+
+  async function exportHtml() {
+    const hydrated = await hydrateSurveyPhotosForExport(jobId, latestSurvey.current)
+    exportHtmlReport(hydrated, analyzeReadiness(hydrated))
+  }
+
+  async function exportDraftJson() {
+    const hydrated = await hydrateSurveyPhotosForExport(jobId, latestSurvey.current)
+    downloadJson(hydrated)
   }
 
   function movePanel(delta) {
@@ -265,6 +337,88 @@ export default function SiteSurvey({ jobId }) {
       const next = PANELS[idx + delta]
       return next ? next[0] : current
     })
+  }
+
+  function renderActivePanel() {
+    if (activePanel === 'site') {
+      return (
+        <SurveySitePanel
+          techName={survey.techName}
+          phoneCount={survey.phoneCount}
+          customer={survey.customer}
+          onField={onSiteField}
+          onCustomerField={onCustomerField}
+        />
+      )
+    }
+    if (activePanel === 'numbers') {
+      return (
+        <SurveyNumbersPanel
+          mainNumbers={survey.mainNumbers || []}
+          onAdd={addMainNumber}
+          onAddPreset={addMainNumberPreset}
+          onUpdate={updateMainNumber}
+          onRemove={removeMainNumber}
+        />
+      )
+    }
+    if (activePanel === 'users') {
+      return (
+        <SurveyUsersPanel
+          users={survey.users || []}
+          onAdd={addUser}
+          onAddMany={addUsers}
+          onUpdate={updateUser}
+          onRemove={removeUser}
+        />
+      )
+    }
+    if (activePanel === 'network') {
+      return (
+        <SurveyNetworkPanel
+          speedtests={survey.speedtests || []}
+          visualwareRuns={survey.visualwareRuns || []}
+          phoneCount={survey.phoneCount}
+          readiness={readiness}
+          parseNote={parseNote}
+          speedRun={speedRun}
+          setSpeedRun={setSpeedRun}
+          mcRun={mcRun}
+          setMcRun={setMcRun}
+          onUpdateSpeedtest={onUpdateSpeedtest}
+          onUpdateVisualware={onUpdateVisualware}
+          onParseReport={parseReport}
+          onLoadSample={loadVisualwareSample}
+        />
+      )
+    }
+    if (activePanel === 'e911') {
+      return (
+        <SurveyE911Panel
+          e911Locations={survey.e911Locations || []}
+          users={survey.users || []}
+          onChange={onE911Change}
+        />
+      )
+    }
+    if (activePanel === 'topology') {
+      return (
+        <SurveyTopologyPanel
+          topology={survey.topology}
+          onChange={onTopologyChange}
+        />
+      )
+    }
+    if (activePanel === 'photos') {
+      return (
+        <SurveyPhotosPanel
+          jobId={jobId}
+          photos={survey.photos || []}
+          onChange={onPhotosChange}
+        />
+      )
+    }
+    return null
   }
 
   return (
@@ -278,7 +432,7 @@ export default function SiteSurvey({ jobId }) {
         </div>
         <div className="survey-actions">
           <button type="button" className="btn btn-secondary" onClick={startNew}>New survey</button>
-          <button type="button" className="btn btn-secondary" onClick={() => downloadJson(survey)} title="Save the full working survey">Save draft</button>
+          <button type="button" className="btn btn-secondary" onClick={exportDraftJson} title="Save the full working survey">Save draft</button>
           <button type="button" className="btn btn-primary" onClick={exportPdf} disabled={exportingPdf} title="Download a PDF report">
             {exportingPdf ? 'Creating PDF…' : 'Export PDF'}
           </button>
@@ -286,8 +440,8 @@ export default function SiteSurvey({ jobId }) {
             <summary className="btn btn-secondary">More</summary>
             <div className="export-menu-panel">
               <button type="button" onClick={() => importRef.current?.click()}>Import draft</button>
-              <button type="button" onClick={() => exportEditableDoc(survey, readiness)}>Export Word</button>
-              <button type="button" onClick={() => exportHtmlReport(survey, readiness)}>Export HTML</button>
+              <button type="button" onClick={exportWord}>Export Word</button>
+              <button type="button" onClick={exportHtml}>Export HTML</button>
             </div>
           </details>
           <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={e => importJson(e.target.files?.[0])} />
@@ -379,31 +533,7 @@ export default function SiteSurvey({ jobId }) {
               </div>
             </div>
             <div className="section-modal-body">
-              <SurveyPanelBody
-                id={activePanel}
-                survey={survey}
-                readiness={readiness}
-                parseNote={parseNote}
-                updateSurvey={updateSurvey}
-                updateCustomer={updateCustomer}
-                updateSpeedtest={updateSpeedtest}
-                updateVisualware={updateVisualware}
-                parseReport={parseReport}
-                loadVisualwareSample={loadVisualwareSample}
-                speedRun={speedRun}
-                setSpeedRun={setSpeedRun}
-                mcRun={mcRun}
-                setMcRun={setMcRun}
-                mainNumbers={mainNumbers}
-                addMainNumber={addMainNumber}
-                addMainNumberPreset={addMainNumberPreset}
-                updateMainNumber={updateMainNumber}
-                removeMainNumber={removeMainNumber}
-                addUser={addUser}
-                addUsers={addUsers}
-                updateUser={updateUser}
-                removeUser={removeUser}
-              />
+              {renderActivePanel()}
             </div>
           </div>
         </div>,
@@ -411,281 +541,6 @@ export default function SiteSurvey({ jobId }) {
       )}
     </section>
   )
-}
-
-function SurveyPanelBody({
-  id,
-  survey,
-  readiness,
-  parseNote,
-  updateSurvey,
-  updateCustomer,
-  updateSpeedtest,
-  updateVisualware,
-  parseReport,
-  loadVisualwareSample,
-  speedRun,
-  setSpeedRun,
-  mcRun,
-  setMcRun,
-  mainNumbers,
-  addMainNumber,
-  addMainNumberPreset,
-  updateMainNumber,
-  removeMainNumber,
-  addUser,
-  addUsers,
-  updateUser,
-  removeUser,
-}) {
-  if (id === 'site') {
-    return (
-      <>
-        <div className="survey-form-grid">
-          <Field label="Field tech name" value={survey.techName || ''} onChange={v => updateSurvey({ techName: v })} />
-          <Field label="Company" value={survey.customer.company} onChange={v => updateCustomer('company', v)} />
-          <Field label="Site name" value={survey.customer.siteName} onChange={v => updateCustomer('siteName', v)} />
-          <Field label="Ticket / project" value={survey.customer.ticketId} onChange={v => updateCustomer('ticketId', v)} />
-          <Field label="Phones planned" type="number" value={survey.phoneCount} onChange={v => updateSurvey({ phoneCount: v })} />
-          <Field label="Contact name" value={survey.customer.contactName} onChange={v => updateCustomer('contactName', v)} />
-          <Field label="Contact phone" value={survey.customer.contactPhone} onChange={v => updateCustomer('contactPhone', v)} />
-          <Field label="Contact email" value={survey.customer.contactEmail} onChange={v => updateCustomer('contactEmail', v)} />
-          <Field label="Address" value={survey.customer.address} onChange={v => updateCustomer('address', v)} />
-        </div>
-        <label className="survey-field full">
-          Site / access notes
-          <textarea value={survey.customer.notes} onChange={e => updateCustomer('notes', e.target.value)} placeholder="Parking, MDF location, VLAN notes, firewall owner, access instructions..." />
-        </label>
-      </>
-    )
-  }
-
-  if (id === 'numbers') {
-    return (
-      <>
-        <div className="design-list-head">
-          <div>
-            <h3>Company main numbers</h3>
-            <p>Primary business line, fax, toll-free, and auto-attendant DIDs.</p>
-          </div>
-          <div className="btn-row">
-            {MAIN_NUMBER_PRESETS.map(label => (
-              <button key={label} type="button" className="btn btn-secondary" onClick={() => addMainNumberPreset(label)}>{label}</button>
-            ))}
-            <button type="button" className="btn btn-primary" onClick={addMainNumber}>Custom</button>
-          </div>
-        </div>
-        <div className="main-number-table">
-          <div className="main-number-row main-number-head">
-            <span>Label</span><span>Number</span><span>Notes</span><span />
-          </div>
-          {mainNumbers.length === 0 && (
-            <div className="empty-hint-action">
-              <p>No main numbers yet. Start with the primary business line.</p>
-              <button type="button" className="btn btn-primary" onClick={() => addMainNumberPreset('Main line')}>Add main line</button>
-            </div>
-          )}
-          {mainNumbers.map(entry => (
-            <div className="main-number-row" key={entry.id}>
-              <input value={entry.label} onChange={e => updateMainNumber(entry.id, 'label', e.target.value)} placeholder="Main line / Fax / Toll-free" />
-              <input value={entry.number} onChange={e => updateMainNumber(entry.id, 'number', e.target.value)} placeholder="337-555-0100" />
-              <input value={entry.notes} onChange={e => updateMainNumber(entry.id, 'notes', e.target.value)} placeholder="Rings to reception, port from carrier..." />
-              <button type="button" onClick={() => removeMainNumber(entry.id)}>Remove</button>
-            </div>
-          ))}
-        </div>
-      </>
-    )
-  }
-
-  if (id === 'users') {
-    return (
-      <>
-        <div className="design-list-head">
-          <div>
-            <h3>Users and phones</h3>
-            <p>Who gets a phone, email, extension, and DID at this site.</p>
-          </div>
-          <div className="btn-row">
-            <button type="button" className="btn btn-secondary" onClick={() => addUsers(5)}>Add 5 users</button>
-            <button type="button" className="btn btn-primary" onClick={addUser}>Add user</button>
-          </div>
-        </div>
-        <div className="user-table user-table-wide">
-          <div className="user-row user-head">
-            <span>Name</span>
-            <span>Username</span>
-            <span>Email</span>
-            <span>Extension</span>
-            <span>Phone / DID</span>
-            <span>Location</span>
-            <span>Role</span>
-            <span />
-          </div>
-          {survey.users.length === 0 && (
-            <div className="empty-hint-action">
-              <p>No users yet. Add the first extension or bulk-add five rows.</p>
-              <button type="button" className="btn btn-primary" onClick={addUser}>Add user</button>
-            </div>
-          )}
-          {survey.users.map(user => (
-            <div className="user-row" key={user.id}>
-              <input value={user.name} onChange={e => updateUser(user.id, 'name', e.target.value)} placeholder="Jane Tech" />
-              <input value={user.username} onChange={e => updateUser(user.id, 'username', e.target.value)} placeholder="jane.tech" />
-              <input type="email" value={user.email || ''} onChange={e => updateUser(user.id, 'email', e.target.value)} placeholder="jane@company.com" />
-              <input value={user.extension || ''} onChange={e => updateUser(user.id, 'extension', e.target.value)} placeholder="1001" />
-              <input value={user.phone || ''} onChange={e => updateUser(user.id, 'phone', e.target.value)} placeholder="337-555-0100" />
-              <input value={user.location || ''} onChange={e => updateUser(user.id, 'location', e.target.value)} placeholder="Front desk" />
-              <input value={user.role} onChange={e => updateUser(user.id, 'role', e.target.value)} placeholder="User" />
-              <button type="button" onClick={() => removeUser(user.id)}>Remove</button>
-            </div>
-          ))}
-        </div>
-      </>
-    )
-  }
-
-  if (id === 'network') {
-    const speedtests = survey.speedtests || []
-    const visualwareRuns = survey.visualwareRuns || []
-    const st = speedtests[speedRun] || {}
-    const vw = visualwareRuns[mcRun] || {}
-    const netProg = networkRunProgress(survey)
-
-    return (
-      <>
-        <div className="design-list-head">
-          <div>
-            <h3>Network readiness</h3>
-            <p>
-              Run {NETWORK_RUN_COUNT} Speedtests and {NETWORK_RUN_COUNT} MyConnection tests.
-              Verdict uses the worst-case across all runs ({netProg.speedFilled}/{NETWORK_RUN_COUNT} Speed · {netProg.vwFilled}/{NETWORK_RUN_COUNT} MyConnection).
-            </p>
-          </div>
-        </div>
-        <div className="tool-strip">
-          {TOOLS.map(tool => (
-            <div className="tool-link" key={tool.title}>
-              <div>
-                <strong>{tool.title}</strong>
-                <span>{tool.label}</span>
-              </div>
-              <a href={tool.url} target="_blank" rel="noopener noreferrer">Open</a>
-              {tool.secondaryUrl && <a href={tool.secondaryUrl} target="_blank" rel="noopener noreferrer">BCS</a>}
-            </div>
-          ))}
-        </div>
-        <div className="survey-score-grid readiness-inline">
-          <Score label="Worst jitter" value={readiness.summary.jitter != null ? `${readiness.summary.jitter} ms` : '-'} />
-          <Score label="Worst loss" value={readiness.summary.loss != null ? `${readiness.summary.loss}%` : '-'} />
-          <Score label="Lowest MOS" value={readiness.summary.mos ?? '-'} />
-          <Score label="Calls" value={readiness.summary.supported != null ? `${readiness.summary.supported}/${readiness.summary.requested}` : '-'} />
-        </div>
-
-        <div className="test-run-block">
-          <div className="test-run-head">
-            <h4>Speedtest</h4>
-            <div className="test-run-tabs" role="tablist" aria-label="Speedtest runs">
-              {Array.from({ length: NETWORK_RUN_COUNT }, (_, i) => (
-                <button
-                  key={`st-${i}`}
-                  type="button"
-                  role="tab"
-                  aria-selected={speedRun === i}
-                  className={`test-run-tab${speedRun === i ? ' is-active' : ''}${speedtests[i]?.downloadMbps || speedtests[i]?.uploadMbps ? ' has-data' : ''}`}
-                  onClick={() => setSpeedRun(i)}
-                >
-                  Run {i + 1}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="survey-form-grid">
-            <Field label="Download Mbps" type="number" value={st.downloadMbps || ''} onChange={v => updateSpeedtest(speedRun, 'downloadMbps', v)} />
-            <Field label="Upload Mbps" type="number" value={st.uploadMbps || ''} onChange={v => updateSpeedtest(speedRun, 'uploadMbps', v)} />
-            <Field label="Latency ms" type="number" value={st.latencyMs || ''} onChange={v => updateSpeedtest(speedRun, 'latencyMs', v)} />
-            <Field label="Server" value={st.server || ''} onChange={v => updateSpeedtest(speedRun, 'server', v)} />
-            <Field label="Tested at" type="datetime-local" value={st.testedAt || ''} onChange={v => updateSpeedtest(speedRun, 'testedAt', v)} />
-            <Field label="Notes" value={st.notes || ''} onChange={v => updateSpeedtest(speedRun, 'notes', v)} />
-          </div>
-        </div>
-
-        <div className="test-run-block">
-          <div className="test-run-head">
-            <h4>MyConnection</h4>
-            <div className="test-run-tabs" role="tablist" aria-label="MyConnection runs">
-              {Array.from({ length: NETWORK_RUN_COUNT }, (_, i) => (
-                <button
-                  key={`mc-${i}`}
-                  type="button"
-                  role="tab"
-                  aria-selected={mcRun === i}
-                  className={`test-run-tab${mcRun === i ? ' is-active' : ''}${visualwareRuns[i]?.rawPaste || visualwareRuns[i]?.overall ? ' has-data' : ''}`}
-                  onClick={() => setMcRun(i)}
-                >
-                  Run {i + 1}
-                </button>
-              ))}
-            </div>
-            <div className="btn-row">
-              <button type="button" className="btn btn-secondary" onClick={loadVisualwareSample}>Load sample</button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => parseReport(mcRun)}
-                disabled={!String(vw.rawPaste || '').trim()}
-              >
-                Parse run {mcRun + 1}
-              </button>
-            </div>
-          </div>
-          <textarea
-            className="report-textarea"
-            value={vw.rawPaste || ''}
-            onChange={e => updateVisualware(mcRun, 'rawPaste', e.target.value)}
-            placeholder={`Paste MyConnection / Visualware result for run ${mcRun + 1}…`}
-            spellCheck={false}
-          />
-          {parseNote && <div className={parseNote.type === 'ok' ? 'parse-note parse-ok' : 'parse-note parse-error'}>{parseNote.text}</div>}
-        </div>
-
-        <MetricSections sections={readiness.sections} />
-        <div className="panel" style={{ marginTop: 16 }}>
-          <div className="panel-head"><span className="panel-title">Quality guide</span></div>
-          <table className="threshold-table compact">
-            <tbody>
-              {QUALITY_THRESHOLDS.map(t => (
-                <tr key={t.metric}><td>{t.metric}</td><td className="ok-cell">{t.good}</td><td className="warn-cell">{t.watch}</td><td className="err-cell">{t.bad}</td></tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </>
-    )
-  }
-
-  if (id === 'e911') {
-    return (
-      <E911Section
-        survey={survey}
-        onChange={patch => updateSurvey(patch)}
-      />
-    )
-  }
-
-  if (id === 'topology') {
-    return (
-      <TopologyEditor topology={survey.topology} onChange={topology => updateSurvey({ topology })} />
-    )
-  }
-
-  if (id === 'photos') {
-    return (
-      <SurveyPhotos photos={survey.photos} onChange={photos => updateSurvey({ photos })} />
-    )
-  }
-
-  return null
 }
 
 function panelProgress(survey, id) {
@@ -736,49 +591,11 @@ function panelProgress(survey, id) {
   return { filled: 0, total: 1, ratio: 0 }
 }
 
-function newUser() {
-  return emptySurveyUser()
-}
-
-function Field({ label, value, onChange, type = 'text' }) {
-  return (
-    <label className="survey-field">
-      {label}
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} />
-    </label>
-  )
-}
-
 function Score({ label, value }) {
   return (
     <div className="survey-score">
       <span>{label}</span>
       <strong>{value}</strong>
-    </div>
-  )
-}
-
-function MetricSections({ sections }) {
-  return (
-    <div className="metric-panel">
-      {sections.slice(1).map(section => (
-        <div key={section.section}>
-          <div className="metric-section-title">{section.section}</div>
-          <div className="threshold-table-wrap">
-            <table className="threshold-table metric-table">
-              <tbody>
-                {section.rows.map(row => (
-                  <tr key={row.metric}>
-                    <td>{row.metric}</td>
-                    <td>{row.value}</td>
-                    <td><span className={`status-pill status-${row.status}`}>{row.status === 'pass' ? 'Good' : row.status === 'warn' ? 'Watch' : row.status === 'fail' ? 'Fail' : '-'}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ))}
     </div>
   )
 }

@@ -1,134 +1,192 @@
 /**
- * HomeHub — My day: assigned jobs + hub shortcuts
+ * HomeHub — toolkit-first by default; job-narrative when FEATURES.jobFirstHome.
  */
 
-import { useMemo } from 'react'
-import { listJobs } from '../lib/jobModel.js'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  greetingForHour,
+  listJobs,
+  pickHomeUrgent,
+} from '../lib/jobModel.js'
+import { FEATURES } from '../lib/features.js'
 import { navigate } from '../lib/router.js'
+import { onDataChanged } from '../lib/dataEvents.js'
+import JobDayNarrative, { buildJobHealth } from './JobDayNarrative.jsx'
 
-const QUICK_LINKS = [
+const TOOL_HUBS = [
   {
+    id: 'reference',
+    label: 'Reference',
+    blurb: 'Look things up',
     path: '/tools/reference',
-    label: 'Reference hub',
-    desc: 'Yealink + codecs + SIP codes search',
+    links: [
+      { label: 'Yealink codes', path: '/tools/yealink' },
+      { label: 'Codec & QoS', path: '/tools/codec' },
+      { label: 'SIP response codes', path: '/tools/codec?tab=sip' },
+      { label: 'Firmware', path: '/tools/reference/firmware' },
+    ],
   },
   {
+    id: 'troubleshoot',
+    label: 'Troubleshoot',
+    blurb: "Figure out what's wrong",
     path: '/tools/troubleshoot',
-    label: 'Troubleshoot hub',
-    desc: 'Symptom Wizard + Call Diagnostic',
+    links: [
+      { label: 'Call Diagnostic', path: '/tools/calldiag' },
+      { label: 'Packet Capture', path: '/tools/pcap' },
+      { label: 'Network Check', path: '/tools/netcheck' },
+      { label: 'Symptom Wizard', path: '/tools/symptom' },
+    ],
   },
   {
+    id: 'config',
+    label: 'Config',
+    blurb: 'Build configs and checklists',
     path: '/tools/config',
-    label: 'Config hub',
-    desc: 'Algo Config, Port Checklist, Quick Card',
+    links: [
+      { label: 'Algo paging config', path: '/tools/config/algo' },
+      { label: 'Port checklist', path: '/tools/config/ports' },
+      { label: 'Quick card (end-user guide)', path: '/tools/config/quickcard' },
+      { label: 'Router Advisor', path: '/tools/router' },
+    ],
   },
 ]
 
-function jobSortKey(job) {
-  return job.cutover_date || job.foc_date || job.updatedAt || ''
-}
+function ToolkitHome({ refreshKey, onOpenSearch }) {
+  const searchRef = useRef(null)
+  const [tick, setTick] = useState(0)
 
-function formatJobDate(job) {
-  const raw = job.cutover_date || job.foc_date
-  if (!raw) return 'No date'
-  try {
-    return new Date(`${raw}T12:00:00`).toLocaleDateString(undefined, {
-      month: 'short',
-      day: 'numeric',
-    })
-  } catch {
-    return raw
-  }
-}
+  useEffect(() => onDataChanged((detail) => {
+    if (detail.kind !== 'job') return
+    if (!(detail.ids || []).length) return
+    setTick(t => t + 1)
+  }), [])
 
-const STAGE_LABELS = {
-  survey: 'Survey',
-  design: 'Design',
-  golive: 'Go-Live',
-}
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    const desktop = window.matchMedia('(min-width: 901px)').matches
+    if (desktop) {
+      // Defer so route paint settles before focusing the hero search.
+      const id = window.requestAnimationFrame(() => searchRef.current?.focus())
+      return () => window.cancelAnimationFrame(id)
+    }
+    return undefined
+  }, [])
 
-export default function HomeHub({ profileId, refreshKey }) {
   const jobs = useMemo(() => {
     try {
-      let list = listJobs()
-      if (profileId) {
-        const mine = list.filter(j => j.assigned_to === profileId)
-        list = mine.length ? mine : list
-      }
-      return [...list].sort((a, b) => String(jobSortKey(a)).localeCompare(String(jobSortKey(b))))
+      return listJobs()
     } catch {
       return []
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshKey, profileId])
+  }, [refreshKey, tick])
+
+  const urgent = useMemo(() => {
+    if (!jobs.length) return null
+    const rows = []
+    for (const job of jobs) {
+      try {
+        rows.push(buildJobHealth(job))
+      } catch (err) {
+        console.error(err)
+      }
+    }
+    return pickHomeUrgent(jobs, rows)
+  }, [jobs])
+
+  const greeting = `${greetingForHour()}.`
+  const dateLabel = new Date().toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  })
+
+  function openSearch() {
+    if (typeof onOpenSearch === 'function') onOpenSearch()
+  }
 
   return (
-    <div className="my-day">
-      <header className="my-day-header">
-        <div>
-          <div className="survey-kicker">Home</div>
-          <h1>My day</h1>
-          <p>Jobs on your plate, sorted by cutover and FOC.</p>
-        </div>
-        <button type="button" className="btn btn-secondary" onClick={() => navigate('/jobs')}>
-          All jobs
-        </button>
+    <div className="home-toolkit">
+      <header className="home-toolkit-header">
+        <span className="home-toolkit-greeting">{greeting}</span>
+        <span className="home-toolkit-date">{dateLabel}</span>
       </header>
 
-      <section className="my-day-jobs" aria-label="Jobs on your plate">
-        {jobs.length === 0 ? (
-          <div className="empty-hint-action my-day-jobs-empty">
-            <p>No jobs on your plate yet.</p>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => navigate('/jobs', { query: { new: '1' } })}
-            >
-              New job
-            </button>
-          </div>
-        ) : (
-          <div className="my-day-job-list">
-            {jobs.map(job => (
-              <button
-                key={job.id}
-                type="button"
-                className="my-day-job-card"
-                onClick={() => navigate(`/job/${job.id}`)}
-              >
-                <div className="my-day-job-main">
-                  <strong>{job.customer || 'Untitled customer'}</strong>
-                  <span>{job.site || 'Site TBD'}</span>
-                </div>
-                <div className="my-day-job-meta">
-                  <span className="job-stage-badge">{STAGE_LABELS[job.stage] || job.stage || 'Survey'}</span>
-                  <span className="my-day-job-date">{formatJobDate(job)}</span>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
+      <section className="home-toolkit-search" aria-label="Search">
+        <button
+          ref={searchRef}
+          type="button"
+          className="home-toolkit-search-bar"
+          onClick={openSearch}
+          aria-label="Search jobs, tools, accounts"
+        >
+          <span>Search codes, tools, jobs…</span>
+          <kbd>⌘K</kbd>
+        </button>
       </section>
 
-      <section className="my-day-quick" aria-label="Tool hubs">
-        <div className="my-day-quick-heading">
-          <span className="survey-kicker">Shortcuts</span>
-          <h2>Tools</h2>
-        </div>
-        <div className="my-day-quick-grid my-day-quick-grid-3">
-          {QUICK_LINKS.map(link => (
+      <section className="home-toolkit-hubs" aria-label="Tools">
+        {TOOL_HUBS.map(hub => (
+          <article key={hub.id} className="home-hub-card">
             <button
-              key={link.path}
               type="button"
-              className="my-day-quick-card"
-              onClick={() => navigate(link.path)}
+              className="home-hub-card-title"
+              onClick={() => navigate(hub.path)}
             >
-              <strong>{link.label}</strong>
-              <span>{link.desc}</span>
+              {hub.label}
             </button>
-          ))}
-        </div>
+            <p className="home-hub-card-blurb">{hub.blurb}</p>
+            <ul className="home-hub-card-links">
+              {hub.links.map(link => (
+                <li key={link.path}>
+                  <button
+                    type="button"
+                    className="home-hub-sublink"
+                    onClick={() => navigate(link.path)}
+                  >
+                    {link.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </article>
+        ))}
       </section>
+
+      {urgent && (
+        <section className="home-jobs-strip" aria-label="Jobs">
+          <button
+            type="button"
+            className="home-jobs-strip-line"
+            onClick={() => navigate(urgent.route)}
+          >
+            {urgent.label}
+          </button>
+          <button
+            type="button"
+            className="home-jobs-strip-link"
+            onClick={() => navigate('/jobs')}
+          >
+            Jobs
+          </button>
+        </section>
+      )}
     </div>
   )
+}
+
+export default function HomeHub({ profileId, refreshKey, profile, onOpenSearch }) {
+  if (FEATURES.jobFirstHome) {
+    return (
+      <JobDayNarrative
+        profileId={profileId}
+        refreshKey={refreshKey}
+        profile={profile}
+        variant="home"
+        onOpenSearch={onOpenSearch}
+      />
+    )
+  }
+  return <ToolkitHome refreshKey={refreshKey} onOpenSearch={onOpenSearch} />
 }

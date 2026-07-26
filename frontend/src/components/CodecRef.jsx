@@ -3,7 +3,8 @@
  * Codec bandwidth table, DSCP/QoS values, SIP port reference
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useRoute } from '../lib/router.js'
 
 const TABS = ['Codecs', 'QoS / DSCP', 'SIP Response Codes']
 
@@ -68,9 +69,24 @@ export const SIP_CODES = [
 
 const SEVERITY_CLS = { ok: 'cr-sev-ok', warn: 'cr-sev-warn', error: 'cr-sev-error', info: 'cr-sev-info' }
 
-export default function CodecRef() {
-  const [tab, setTab] = useState('Codecs')
+function tabFromQuery(query) {
+  const raw = String(query?.tab || '').toLowerCase()
+  if (raw === 'sip' || raw === 'codes' || raw === 'response') return 'SIP Response Codes'
+  if (raw === 'qos' || raw === 'dscp') return 'QoS / DSCP'
+  if (raw === 'codec' || raw === 'codecs') return 'Codecs'
+  return null
+}
+
+export default function CodecRef({ initialTab } = {}) {
+  const route = useRoute()
+  const fromQuery = tabFromQuery(route.query)
+  const [tab, setTab] = useState(() => initialTab || fromQuery || 'Codecs')
   const [codeFilter, setCodeFilter] = useState('')
+
+  useEffect(() => {
+    const next = initialTab || fromQuery
+    if (next) setTab(next)
+  }, [initialTab, fromQuery])
 
   const filteredCodes = SIP_CODES.filter(c =>
     !codeFilter ||

@@ -12,11 +12,14 @@ export const REFERENCE_RECORDS = [
   ...YEALINK_CODES.map(code => ({
     source: /** @type {const} */ ('yealink'),
     title: code.name,
-    subtitle: code.category || 'Yealink',
-    body: [code.description, ...(code.codes || [])].filter(Boolean).join(' · '),
+    subtitle: [code.task, code.category].filter(Boolean).join(' · ') || 'Yealink',
+    body: [code.description, code.caveat, ...(code.codes || [])].filter(Boolean).join(' · '),
     keywords: [
       code.id,
       code.category,
+      code.task,
+      code.caveat,
+      ...(code.models || []),
       ...(code.codes || []),
       ...(code.variables || []).flatMap(v => [v.id, v.label]),
     ].filter(Boolean).map(String),

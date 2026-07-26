@@ -19,7 +19,7 @@ export default function ToolsTroubleshoot() {
       <header className="tools-page-header">
         <div className="survey-kicker">Tools</div>
         <h1>Troubleshoot</h1>
-        <p>Walk the symptom tree; open Call Diagnostic when the wizard escalates to it.</p>
+        <p>Walk the symptom tree, or open Call Diagnostic / Packet Capture from Home when you have a capture.</p>
       </header>
 
       <div className="tools-page-body">
