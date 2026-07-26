@@ -53,6 +53,7 @@ const ToolsTroubleshoot = lazy(() => import('./components/ToolsTroubleshoot.jsx'
 const ToolsConfig = lazy(() => import('./components/ToolsConfig.jsx'))
 const Runbook = lazy(() => import('./components/Runbook.jsx'))
 const CommandPalette = lazy(() => import('./components/CommandPalette.jsx'))
+const CustomerPortal = lazy(() => import('./components/CustomerPortal.jsx'))
 
 // All seven tools — must remain directly reachable (do not drop)
 const YealinkCodes = lazy(() => import('./components/YealinkCodes.jsx'))
@@ -65,6 +66,7 @@ const PortChecklist = lazy(() => import('./components/PortChecklist.jsx'))
 const AlgoConfig = lazy(() => import('./components/AlgoConfig.jsx'))
 const QuickCard = lazy(() => import('./components/QuickCard.jsx'))
 const CodecRef = lazy(() => import('./components/CodecRef.jsx'))
+const CarrierTemplates = lazy(() => import('./components/CarrierTemplates.jsx'))
 
 const WORKSPACES = [
   { id: 'siteSurvey', label: 'Site Survey', description: 'Field handoff and readiness', route: 'survey' },
@@ -83,6 +85,7 @@ const TOOLS = [
   { id: 'quickcard', label: 'Quick Card' },
   { id: 'codec', label: 'Codec & QoS' },
   { id: 'router', label: 'Router Advisor' },
+  { id: 'carriers', label: 'Carrier Templates' },
 ]
 
 const TOOL_GROUPS = [
@@ -113,6 +116,7 @@ const TOOL_LABELS = {
   algo: 'Algo Config',
   quickcard: 'Quick Card',
   codec: 'Codec & QoS',
+  carriers: 'Carrier Templates',
 }
 
 export default function App() {
@@ -322,6 +326,15 @@ export default function App() {
   const inJobSection = ['cockpit', 'survey', 'design', 'golive', 'runbook'].includes(route.name)
   const inTools = route.name === 'tool' || String(route.name).startsWith('tools')
 
+  // Customer portal — no auth required, no app chrome
+  if (route.name === 'portal' && accountId) {
+    return (
+      <Suspense fallback={<div className="workspace-loading">Loading…</div>}>
+        <CustomerPortal accountId={accountId} />
+      </Suspense>
+    )
+  }
+
   if (!repoReady || !authReady || authGate === 'loading') {
     return (
       <div className="app-root">
@@ -357,174 +370,157 @@ export default function App() {
     )
   }
 
+  // Topbar breadcrumb context
+  const topbarCrumb = (() => {
+    if (inJobSection && job) {
+      const section = SECTION_LABELS[route.name] || ''
+      return <><span>{job.customer || 'Job'}</span>{section ? <><span className="topbar-crumb-sep">/</span><strong>{section}</strong></> : null}</>
+    }
+    if (route.name === 'account' && account) return <><span>Accounts</span><span className="topbar-crumb-sep">/</span><strong>{account.name}</strong></>
+    if (route.name === 'accounts') return <strong>Accounts</strong>
+    if (route.name === 'jobs') return <strong>Jobs</strong>
+    if (route.name === 'settings') return <strong>Settings</strong>
+    if (route.name === 'tool') return <><span>Tools</span><span className="topbar-crumb-sep">/</span><strong>{TOOL_LABELS[route.params.toolId] || 'Tool'}</strong></>
+    if (inTools) return <strong>Tools</strong>
+    return <strong>Home</strong>
+  })()
+
   return (
     <div className="app-root">
       <div className="app-atmosphere" aria-hidden="true" />
-      <header className="app-header">
-        <div className="brand">
-          <button type="button" className="brand-btn" onClick={goHome} aria-label="Go to home">
+      <div className="app-shell">
+
+        {/* ── Sidebar ─────────────────────────────────────── */}
+        <aside className="app-sidebar">
+          <button type="button" className="sidebar-brand-btn" onClick={goHome} aria-label="Go to home">
             <BrandMark />
-            <div className="brand-copy">
-              <div className="brand-name">ClearLine</div>
-              <div className="brand-tag">{brandTag}</div>
+            <div className="sidebar-brand-copy">
+              <div className="sidebar-brand-name">ClearLine</div>
+              {(job?.customer || account?.name) && (
+                <div className="sidebar-brand-tag">{job?.customer || account?.name}</div>
+              )}
             </div>
           </button>
-        </div>
-        <nav className="primary-nav" aria-label="Primary">
-          <button
-            type="button"
-            className={`primary-nav-item${route.name === 'home' ? ' is-active' : ''}`}
-            aria-current={route.name === 'home' ? 'page' : undefined}
-            onClick={goHome}
-          >
-            Home
-          </button>
-          <button
-            type="button"
-            className={`primary-nav-item${route.name === 'jobs' || inJobSection ? ' is-active' : ''}`}
-            aria-current={route.name === 'jobs' || inJobSection ? 'page' : undefined}
-            onClick={() => navigate('/jobs')}
-          >
-            Jobs
-          </button>
-          <button
-            type="button"
-            className={`primary-nav-item${route.name === 'accounts' || route.name === 'account' ? ' is-active' : ''}`}
-            aria-current={route.name === 'accounts' || route.name === 'account' ? 'page' : undefined}
-            onClick={() => navigate('/accounts')}
-          >
-            Accounts
-          </button>
-          <button
-            type="button"
-            className={`primary-nav-item${inTools ? ' is-active' : ''}`}
-            aria-current={inTools ? 'page' : undefined}
-            onClick={() => navigate('/tools/calldiag')}
-          >
-            Tools
-          </button>
-        </nav>
-        <div className="header-actions">
-          {inJobSection && (
+
+          <nav className="sidebar-nav" aria-label="Primary">
+            <button type="button" className={`sidebar-item${route.name === 'home' ? ' is-active' : ''}`} onClick={goHome}>
+              Home
+            </button>
             <button
               type="button"
-              className="btn btn-secondary jobs-switch"
+              className={`sidebar-item${route.name === 'jobs' || inJobSection ? ' is-active' : ''}`}
               onClick={() => navigate('/jobs')}
             >
               Jobs
             </button>
-          )}
-          {route.name === 'account' && (
             <button
               type="button"
-              className="btn btn-secondary jobs-switch"
+              className={`sidebar-item${route.name === 'accounts' || route.name === 'account' ? ' is-active' : ''}`}
               onClick={() => navigate('/accounts')}
             >
               Accounts
             </button>
-          )}
-          <button
-            type="button"
-            className="btn btn-secondary header-search-btn"
-            aria-label="Open command palette"
-            onClick={() => setPaletteOpen(true)}
-          >
-            Search
-          </button>
-          {authEnabled() && (
-            <SyncChip onOpenConflict={handleOpenConflict} />
-          )}
-          <HeaderMenu
-            theme={theme}
-            onToggleTheme={() => setTheme(current => (current === 'dark' ? 'light' : 'dark'))}
-            profile={profile}
-            onOpenSettings={() => navigate('/settings')}
-            onSignedOut={() => {
-              setProfile(null)
-              setAuthGate(authEnabled() ? 'signin' : 'app')
-              goHome()
-            }}
-          />
-        </div>
-      </header>
-
-      {saveBanner && (
-        <div
-          className={`app-save-banner${saveBanner.type === 'error' ? ' is-error' : ' is-warn'}`}
-          role="status"
-        >
-          <span>{saveBanner.message}</span>
-          <button type="button" className="btn btn-secondary" onClick={() => setSaveBanner(null)}>
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      <PwaUpdateBanner />
-
-      {inJobSection && jobId && route.name !== 'runbook' && (
-        <div className="app-nav-wrap">
-          <nav className="workspace-tabs workspace-tabs-4" aria-label="Job sections">
             <button
               type="button"
-              onClick={() => navigate(`/job/${jobId}`)}
-              className={`workspace-tab${route.name === 'cockpit' ? ' workspace-tab-active' : ''}`}
-              aria-selected={route.name === 'cockpit'}
+              className={`sidebar-item${inTools ? ' is-active' : ''}`}
+              onClick={() => navigate('/tools/calldiag')}
             >
-              <span>Cockpit</span>
+              Tools
             </button>
-            {WORKSPACES.map(ws => (
-              <button
-                key={ws.id}
-                type="button"
-                onClick={() => navigate(`/job/${jobId}/${ws.route}`)}
-                className={`workspace-tab${route.name === ws.route ? ' workspace-tab-active' : ''}`}
-                aria-selected={route.name === ws.route}
-              >
-                <span>{ws.label}</span>
-                <small>{ws.description}</small>
-              </button>
-            ))}
           </nav>
-          <JobPresence jobId={jobId} workspace={route.name} />
-          <JobActivity jobId={jobId} />
-        </div>
-      )}
 
-      {inTools && (
-        <div className="app-nav-wrap">
-          <nav className="workspace-tabs tools-tabs-10" aria-label="Tools">
-            {TOOLS.map(tool => (
-              <button
-                key={tool.id}
-                type="button"
-                onClick={() => navigate(`/tools/${tool.id}`)}
-                className={`workspace-tab${route.name === 'tool' && route.params.toolId === tool.id ? ' workspace-tab-active' : ''}`}
-                aria-selected={route.name === 'tool' && route.params.toolId === tool.id}
-              >
-                <span>{tool.label}</span>
-              </button>
-            ))}
-          </nav>
-          <nav className="tools-hub-links" aria-label="Tool hubs">
-            {TOOL_GROUPS.map(g => (
-              <button
-                key={g.id}
-                type="button"
-                className={`tools-hub-link${route.params.toolGroup === g.id ? ' is-active' : ''}`}
-                onClick={() => navigate(`/tools/${g.id}`)}
-              >
-                {g.label}
-              </button>
-            ))}
-          </nav>
-        </div>
-      )}
+          {/* Job sub-nav */}
+          {inJobSection && jobId && (
+            <>
+              <div className="sidebar-divider" />
+              <div className="sidebar-sub-section">
+                <span className="sidebar-section-label">{job?.customer || 'Current job'}</span>
+                <button type="button" className={`sidebar-sub-item${route.name === 'cockpit' ? ' is-active' : ''}`} onClick={() => navigate(`/job/${jobId}`)}>Cockpit</button>
+                {WORKSPACES.map(ws => (
+                  <button key={ws.id} type="button" className={`sidebar-sub-item${route.name === ws.route ? ' is-active' : ''}`} onClick={() => navigate(`/job/${jobId}/${ws.route}`)}>
+                    {ws.label}
+                  </button>
+                ))}
+                <button type="button" className={`sidebar-sub-item${route.name === 'runbook' ? ' is-active' : ''}`} onClick={() => navigate(`/job/${jobId}/runbook`)}>Runbook</button>
+              </div>
+            </>
+          )}
 
-      <main className="app-body" key={`${route.path}-${hubTick}`}>
-        <div className="app-stage">
-          <ErrorBoundary>
-            <Suspense fallback={<div className="workspace-loading">Loading…</div>}>
+          {/* Tools sub-nav */}
+          {inTools && (
+            <>
+              <div className="sidebar-divider" />
+              <div className="sidebar-sub-section">
+                <span className="sidebar-section-label">Diagnostics</span>
+                {TOOLS.filter(t => ['calldiag', 'pcap', 'netcheck', 'symptom'].includes(t.id)).map(tool => (
+                  <button key={tool.id} type="button" className={`sidebar-sub-item${route.name === 'tool' && route.params.toolId === tool.id ? ' is-active' : ''}`} onClick={() => navigate(`/tools/${tool.id}`)}>
+                    {tool.label}
+                  </button>
+                ))}
+                <span className="sidebar-section-label">Config</span>
+                {TOOLS.filter(t => ['yealink', 'algo', 'carriers', 'ports'].includes(t.id)).map(tool => (
+                  <button key={tool.id} type="button" className={`sidebar-sub-item${route.name === 'tool' && route.params.toolId === tool.id ? ' is-active' : ''}`} onClick={() => navigate(`/tools/${tool.id}`)}>
+                    {tool.label}
+                  </button>
+                ))}
+                <span className="sidebar-section-label">Reference</span>
+                {TOOLS.filter(t => ['codec', 'quickcard', 'router'].includes(t.id)).map(tool => (
+                  <button key={tool.id} type="button" className={`sidebar-sub-item${route.name === 'tool' && route.params.toolId === tool.id ? ' is-active' : ''}`} onClick={() => navigate(`/tools/${tool.id}`)}>
+                    {tool.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* Sidebar footer */}
+          <div className="sidebar-footer">
+            <button type="button" className="sidebar-search-btn" onClick={() => setPaletteOpen(true)} aria-label="Search">
+              Search
+              <span className="sidebar-search-kbd">⌘K</span>
+            </button>
+            {authEnabled() && <SyncChip onOpenConflict={handleOpenConflict} />}
+            <HeaderMenu
+              theme={theme}
+              onToggleTheme={() => setTheme(current => (current === 'dark' ? 'light' : 'dark'))}
+              profile={profile}
+              onOpenSettings={() => navigate('/settings')}
+              onSignedOut={() => {
+                setProfile(null)
+                setAuthGate(authEnabled() ? 'signin' : 'app')
+                goHome()
+              }}
+            />
+          </div>
+        </aside>
+
+        {/* ── Content area ────────────────────────────────── */}
+        <div className="app-content">
+          <header className="app-topbar">
+            <div className="topbar-breadcrumb">{topbarCrumb}</div>
+            <div className="topbar-actions">
+              {inJobSection && jobId && (
+                <>
+                  <JobPresence jobId={jobId} workspace={route.name} />
+                  <JobActivity jobId={jobId} />
+                </>
+              )}
+            </div>
+          </header>
+
+          {saveBanner && (
+            <div className={`app-save-banner${saveBanner.type === 'error' ? ' is-error' : ' is-warn'}`} role="status">
+              <span>{saveBanner.message}</span>
+              <button type="button" className="btn btn-secondary" onClick={() => setSaveBanner(null)}>Dismiss</button>
+            </div>
+          )}
+
+          <PwaUpdateBanner />
+
+          <main className="app-body" key={`${route.path}-${hubTick}`}>
+            <div className="app-stage">
+              <ErrorBoundary>
+                <Suspense fallback={<div className="workspace-loading">Loading…</div>}>
               {route.name === 'home' && (
                 <HomeHub
                   refreshKey={hubTick}
@@ -580,13 +576,19 @@ export default function App() {
               {route.name === 'tool' && route.params.toolId === 'algo' && <AlgoConfig />}
               {route.name === 'tool' && route.params.toolId === 'quickcard' && <QuickCard />}
               {route.name === 'tool' && route.params.toolId === 'codec' && <CodecRef />}
+              {route.name === 'tool' && route.params.toolId === 'carriers' && <CarrierTemplates />}
               {route.name === 'tools-reference' && <ToolsReference tab={route.params.toolTab} />}
               {route.name === 'tools-troubleshoot' && <ToolsTroubleshoot />}
               {route.name === 'tools-config' && <ToolsConfig tab={route.params.toolTab} />}
-            </Suspense>
-          </ErrorBoundary>
+                </Suspense>
+              </ErrorBoundary>
+            </div>
+          </main>
         </div>
-      </main>
+        {/* ── End content area ────────────────────────────── */}
+
+      </div>
+      {/* ── End app-shell ───────────────────────────────── */}
 
       {paletteOpen && (
         <Suspense fallback={null}>

@@ -5,6 +5,8 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import AccountCallFlow from './AccountCallFlow.jsx'
+import NsSync from './NsSync.jsx'
+import { ChangeRequestInbox } from './CustomerPortal.jsx'
 import {
   createJob,
   listJobsForAccount,
@@ -17,6 +19,8 @@ import { canApplyRemoteRefresh, onDataChanged } from '../lib/dataEvents.js'
 const TABS = [
   { id: 'flow', label: 'Call flow' },
   { id: 'jobs', label: 'Jobs' },
+  { id: 'ns', label: 'NS Sync' },
+  { id: 'requests', label: 'Requests' },
 ]
 
 const STAGE_LABELS = {
@@ -118,6 +122,18 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
         <div className="survey-actions">
           <button
             type="button"
+            className="btn btn-ghost"
+            title="Share customer portal link"
+            onClick={() => {
+              const url = `${window.location.origin}${window.location.pathname}#/portal/${account.id}`
+              navigator.clipboard?.writeText(url).catch(() => {})
+              window.prompt('Share this link with your customer:', url)
+            }}
+          >
+            Share portal
+          </button>
+          <button
+            type="button"
             className="btn btn-secondary"
             onClick={() => (onBack ? onBack() : navigate('/'))}
           >
@@ -151,6 +167,31 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
             embedded
             onBack={() => (onBack ? onBack() : navigate('/'))}
           />
+        </div>
+      )}
+
+      {tab === 'ns' && (
+        <div className="account-detail-ns">
+          <NsSync
+            account={account}
+            onImported={(updated) => {
+              setAccount(updated)
+              setTab('flow')
+            }}
+          />
+        </div>
+      )}
+
+      {tab === 'requests' && (
+        <div className="account-detail-ns">
+          <div className="ns-sync-header" style={{ marginBottom: 16 }}>
+            <div className="ns-sync-title">Customer change requests</div>
+            <div className="ns-sync-sub">
+              Change requests submitted by your customer via the portal link.
+              Click &ldquo;Share portal&rdquo; above to give your customer their link.
+            </div>
+          </div>
+          <ChangeRequestInbox accountId={accountId} />
         </div>
       )}
 

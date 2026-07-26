@@ -114,7 +114,7 @@ export function buildPrescription(input = {}) {
     id: 'firewall',
     title: '3. Firewall / NAT',
     kind: 'gui',
-    body: `${platform.label} port expectations (verify TODO markers in platformPorts). ${platform.notes || ''}`,
+    body: `${platform.label} port expectations. ${platform.notes || ''}`,
     snippet: null,
     steps: fwSteps,
     meta: {

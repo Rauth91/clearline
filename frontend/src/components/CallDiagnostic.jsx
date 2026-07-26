@@ -78,6 +78,9 @@ export default function CallDiagnostic() {
         <p className="cd-subtitle">
           NetSapiens Call History → Export → upload or paste the CSV. Timing, routing story, and a real SIP ladder.
         </p>
+        <p className="cd-timing-note">
+          Timing shown here is <strong>SIP signaling only</strong> — it reflects when messages were exchanged, not media quality. Jitter, packet loss, and MOS live in the RTP stream; use Packet Capture to analyze those.
+        </p>
       </div>
 
       {showInput && (

@@ -1022,6 +1022,130 @@ const YEALINK_CODES_RAW = [
       { id: 'NUM', label: 'Max Calls (1-6)', default: '2', type: 'number' },
     ],
   },
+
+  // ── BLF / PRESENCE ───────────────────────────────────────────────────────
+  {
+    id: 'blf-subscribe-period',
+    name: 'BLF Subscription Refresh Interval',
+    category: 'BLF / Presence',
+    description: 'How often the phone re-subscribes to BLF presence (seconds). Set ≤ SIP reg interval. Default 1800s. Too short = unnecessary SIP traffic. Too long = stale BLF state after server restart.',
+    codes: ['blf.subscribe_period="{PERIOD}"'],
+    variables: [
+      { id: 'PERIOD', label: 'Interval (seconds)', default: '1800', type: 'number' },
+    ],
+  },
+  {
+    id: 'blf-pickup-enable',
+    name: 'BLF Pickup via BLF Key',
+    category: 'BLF / Presence',
+    description: 'Enable one-touch pickup by pressing the BLF key when it is ringing. The pickup code is prepended to the monitored extension. For NetSapiens use *8 (directed pickup) or your configured group pickup code.',
+    codes: [
+      'features.pickup.blf_visual_enable="1"',
+      'features.blf_pickup.enable="1"',
+      'features.blf_pickup.code="{PICKUP_CODE}"',
+    ],
+    variables: [
+      { id: 'PICKUP_CODE', label: 'Pickup Prefix Code', default: '*8', type: 'text' },
+    ],
+  },
+  {
+    id: 'blf-alert-tone',
+    name: 'BLF Alert Tone (Ringing Notification)',
+    category: 'BLF / Presence',
+    description: 'Play a tone on the monitoring phone when a BLF-watched extension starts ringing. Useful for receptionists watching a queue of extensions.',
+    codes: [
+      'features.blf_alert_tone.enable="{VAL}"',
+      'features.blf_alert_tone.ringtone="Ring{RING_NUM}.wav"',
+    ],
+    variables: [
+      { id: 'VAL', label: 'Enable (1) / Disable (0)', default: '1', type: 'text' },
+      { id: 'RING_NUM', label: 'Ring Tone # (1-8)', default: '2', type: 'number' },
+    ],
+  },
+  {
+    id: 'blf-ns-list-subscription',
+    name: 'BLF List Subscription (NetSapiens XML presence)',
+    category: 'BLF / Presence',
+    description: 'Subscribe to a NetSapiens BLF list (RLMI/XML presence) instead of individual SUBSCRIBE per extension. Reduces SIP traffic when monitoring many extensions. NS must have XML presence list enabled on the domain. URI format: sip:<domain>/listname.',
+    codes: [
+      'account.1.blf_list_uri="sip:{BLF_LIST_URI}"',
+      'account.1.blf_list_pickup_code="{PICKUP_CODE}"',
+      'blf.subscribe_period="{PERIOD}"',
+    ],
+    variables: [
+      { id: 'BLF_LIST_URI', label: 'BLF List URI (domain/listname)', default: 'yourdomain.net', type: 'text' },
+      { id: 'PICKUP_CODE', label: 'Pickup Code', default: '*8', type: 'text' },
+      { id: 'PERIOD', label: 'Subscribe Period (sec)', default: '1800', type: 'number' },
+    ],
+  },
+  {
+    id: 'blf-led-behavior',
+    name: 'BLF LED Behavior',
+    category: 'BLF / Presence',
+    description: 'Control how BLF key LEDs behave: solid when idle, flash when ringing, solid red when busy. These are the standard defaults — adjust only if LED behavior is wrong after provisioning.',
+    codes: [
+      'features.blf_led.idle_color="{IDLE}"',
+      'features.blf_led.ringing_color="{RING}"',
+      'features.blf_led.talking_color="{TALK}"',
+    ],
+    variables: [
+      { id: 'IDLE', label: 'Idle color (0=off, 1=green)', default: '1', type: 'text' },
+      { id: 'RING', label: 'Ringing color (0=off, 1=green, 2=red)', default: '1', type: 'text' },
+      { id: 'TALK', label: 'Busy/Talking color (0=off, 1=green, 2=red)', default: '2', type: 'text' },
+    ],
+  },
+
+  // ── CALL PARK ────────────────────────────────────────────────────────────
+  {
+    id: 'callpark-settings',
+    name: 'Call Park Feature Settings',
+    category: 'Call Park',
+    description: 'Enable Yealink call park and configure park/retrieve feature codes. For NetSapiens: park code is typically *68, retrieve is *88. Verify codes in NS admin → Domain → Feature Codes before provisioning.',
+    codes: [
+      'features.call_park.enable="1"',
+      'features.call_park.park_mode="{MODE}"',
+      'features.call_park.park_code="{PARK_CODE}"',
+      'features.call_park.park_retrieve_code="{RETRIEVE_CODE}"',
+    ],
+    variables: [
+      { id: 'MODE', label: '0=Feature code, 1=Transfer mode', default: '0', type: 'text' },
+      { id: 'PARK_CODE', label: 'Park Code (NS: *68)', default: '*68', type: 'text' },
+      { id: 'RETRIEVE_CODE', label: 'Retrieve Code (NS: *88)', default: '*88', type: 'text' },
+    ],
+  },
+  {
+    id: 'callpark-orbit-blf',
+    name: 'Call Park Orbit Monitoring via BLF',
+    category: 'Call Park',
+    description: 'Monitor a park orbit (slot) using a BLF key. When a call is parked in the slot, the BLF LED lights. Press the key to retrieve. Each orbit maps to a feature code or extension on NS. Use one BLF key per park slot.',
+    codes: [
+      'programablekey.{KEY}.label="{LABEL}"',
+      'programablekey.{KEY}.value="{ORBIT_EXT}"',
+      'programablekey.{KEY}.type="16"',
+      'programablekey.{KEY}.line="1"',
+      '; Note: {ORBIT_EXT} should be the park orbit extension/code on NS',
+      '; Pressing this key while it is lit retrieves the parked call',
+    ],
+    variables: [
+      { id: 'KEY', label: 'Key #', default: '2', type: 'number' },
+      { id: 'LABEL', label: 'Button Label', default: 'Park 701', type: 'text' },
+      { id: 'ORBIT_EXT', label: 'Park Orbit Extension', default: '701', type: 'text' },
+    ],
+  },
+  {
+    id: 'callpark-audio-notify',
+    name: 'Call Park Tone / Ringback',
+    category: 'Call Park',
+    description: 'Play a tone to confirm when a call is successfully parked. Also controls whether the parking phone hears ringback or silence while the call sits in the orbit.',
+    codes: [
+      'features.call_park.park_ringback_enable="{RINGBACK}"',
+      'features.call_park.park_success_tone_enable="{TONE}"',
+    ],
+    variables: [
+      { id: 'RINGBACK', label: 'Ringback while parked (1=yes, 0=no)', default: '0', type: 'text' },
+      { id: 'TONE', label: 'Park success tone (1=yes, 0=no)', default: '1', type: 'text' },
+    ],
+  },
 ]
 
 export const YEALINK_CODES = shapeYealinkCodes(YEALINK_CODES_RAW)

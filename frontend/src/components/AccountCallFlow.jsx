@@ -349,6 +349,15 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
               />
             </label>
             <label className="field">
+              <span>Support email (shown in customer portal)</span>
+              <input
+                type="email"
+                value={account.supportEmail || ''}
+                onChange={e => patchMeta({ supportEmail: e.target.value })}
+                placeholder="support@yourcompany.com"
+              />
+            </label>
+            <label className="field">
               <span>Updated by</span>
               <input
                 value={account.updatedBy}

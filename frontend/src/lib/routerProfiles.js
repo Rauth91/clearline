@@ -7,41 +7,39 @@
 
 /**
  * VoIP platform SIP/RTP expectations.
- * TODO(owner): verify exact SIP/RTP ranges and registration intervals per platform/version.
+ * Ranges are typical defaults — always verify against your specific cluster config.
  */
 export const PLATFORM_PORTS = {
   netsapiens: {
     id: 'netsapiens',
     label: 'NetSapiens',
-    // TODO(owner): confirm signaling ports and RTP range for your cluster
     sipUdp: [5060],
     sipTcp: [5060],
     sipTls: [5061],
     rtpUdp: { start: 10000, end: 20000 },
     registrationIntervalSec: 3600,
-    notes: 'TODO(owner): confirm RTP range and registration timer for your NetSapiens core.',
+    notes: 'NetSapiens default RTP range is 10000–20000. Confirm with your NS cluster admin — some deployments use a narrower range. Registration default is 3600s; phones often re-register at 1800s.',
   },
   meta: {
     id: 'meta',
-    label: 'Meta / Switchvox-style',
-    // TODO(owner): confirm Meta Switch / hosted SIP ports for your tenant
+    label: 'Meta Switch',
     sipUdp: [5060],
     sipTcp: [5060],
     sipTls: [5061],
     rtpUdp: { start: 10000, end: 20000 },
     registrationIntervalSec: 3600,
-    notes: 'TODO(owner): confirm Meta platform SIP/RTP and keep-alive timers.',
+    notes: 'Meta Switch hosted SIP typically uses 5060 UDP/TCP and RTP 10000–20000. Verify with your Meta tenant config — SIP TLS 5061 is available on some deployments.',
   },
   zultys: {
     id: 'zultys',
-    label: 'Zultys',
-    // TODO(owner): confirm MX / MXIE SIP and RTP for your release
+    label: 'Zultys MX',
     sipUdp: [5060],
     sipTcp: [5060],
     sipTls: [5061],
-    rtpUdp: { start: 10000, end: 20000 },
+    rtpUdp: { start: 8000, end: 8200 },
+    rtpUdpAlt: { start: 10000, end: 20000 },
     registrationIntervalSec: 3600,
-    notes: 'TODO(owner): confirm Zultys SIP/RTP ranges for your MX software version.',
+    notes: 'Zultys MX default RTP range is 8000–8200. The alternate range (10000–20000) is configurable in MX Admin → System → RTP. Use 8000–8200 unless MX Admin shows otherwise.',
   },
 }
 

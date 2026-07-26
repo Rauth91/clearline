@@ -6,23 +6,27 @@ import {
   downloadGoLivePdf,
   exportGoLiveDoc,
   exportGoLiveHtml,
+  exportHandoffDoc,
   goLiveCompletionPercent,
   mergeGoLive,
   sectionProgressGoLive,
 } from '../lib/goLiveModel.js'
 import {
   getJob,
+  getPort,
   jobCompletion,
   loadJobDesign,
   loadJobGoLive,
   loadJobSurvey,
   saveJobGoLive,
+  savePort,
 } from '../lib/jobModel.js'
 import { registerWorkspaceFlush } from '../lib/reloadGate.js'
 import { ConflictBanner } from './ConflictReview.jsx'
 
 const PANELS = [
-  ['cutover', 'Cutover', 'Port date, window, sequence, rollback, and customer comms'],
+  ['port', 'Port', 'LSR submission, FOC date, porting window, day-of contact, and rollback'],
+  ['cutover', 'Cutover', 'Cutover window, sequence, rollback plan, and customer comms'],
   ['install', 'Install', 'VLAN, QoS, phones, programming, and smoke tests'],
   ['provision', 'Provision', 'Build sheet from Survey + Design for PBX programming'],
   ['handoff', 'Handoff', 'Training, admin contacts, escalation, and sign-off'],
@@ -30,6 +34,7 @@ const PANELS = [
 
 export default function GoLive({ jobId }) {
   const [golive, setGolive] = useState(() => mergeGoLive(loadJobGoLive(jobId)))
+  const [port, setPort] = useState(() => getPort(jobId))
   const [activePanel, setActivePanel] = useState(null)
   const [exportingPdf, setExportingPdf] = useState(false)
   const [showE911Test, setShowE911Test] = useState(false)
@@ -53,6 +58,7 @@ export default function GoLive({ jobId }) {
 
   useEffect(() => {
     setGolive(mergeGoLive(loadJobGoLive(jobId)))
+    setPort(getPort(jobId))
     setActivePanel(null)
     setSurveyTick(t => t + 1)
   }, [jobId])
@@ -107,12 +113,22 @@ export default function GoLive({ jobId }) {
   const provisionRatio = provision.hasData ? 1 : 0
   const percent = goLiveCompletionPercent(golive, provisionRatio)
 
+  const portProgress = useMemo(() => {
+    const fields = [port.carrier, port.focDate, port.submittedDate, port.portingWindow, port.dayOfContact]
+    const filled = fields.filter(v => String(v || '').trim()).length
+    const bonus = port.focConfirmed ? 1 : 0
+    return { filled: filled + bonus, total: fields.length + 1, ratio: (filled + bonus) / (fields.length + 1) }
+  }, [port])
+
   const chips = useMemo(() => PANELS.map(([id, title]) => {
     if (id === 'provision') {
       return { id, title, filled: provision.hasData ? 1 : 0, total: 1, ratio: provisionRatio }
     }
+    if (id === 'port') {
+      return { id, title, ...portProgress }
+    }
     return { id, title, ...sectionProgressGoLive(golive, id) }
-  }), [golive, provision.hasData, provisionRatio])
+  }), [golive, provision.hasData, provisionRatio, portProgress])
 
   const panelMeta = activePanel ? PANELS.find(([id]) => id === activePanel) : null
   const panelIndex = activePanel ? PANELS.findIndex(([id]) => id === activePanel) : -1
@@ -206,6 +222,20 @@ export default function GoLive({ jobId }) {
     }))
   }
 
+  function patchPort(partial) {
+    const next = { ...port, ...partial }
+    setPort(next)
+    savePort(jobId, next)
+  }
+
+  // FOC today alert
+  const focToday = useMemo(() => {
+    const focDate = port.focDate
+    if (!focDate) return false
+    const today = new Date().toISOString().slice(0, 10)
+    return focDate === today
+  }, [port.focDate])
+
   function reset() {
     if (!confirm('Clear Go-Live for this job?')) return
     setGolive(createEmptyGoLive())
@@ -227,6 +257,17 @@ export default function GoLive({ jobId }) {
   return (
     <section className="go-live">
       <ConflictBanner jobId={jobId} />
+      {focToday && (
+        <div className="foc-today-banner" role="alert">
+          <strong>Port day is today</strong> — {port.carrier || 'carrier'} FOC date is today.
+          {port.portingWindow ? ` Porting window: ${port.portingWindow}.` : ''}
+          {port.dayOfContact ? ` Day-of contact: ${port.dayOfContact}.` : ''}
+          {' '}
+          <button type="button" className="btn-sm btn btn-secondary" onClick={() => setActivePanel('port')}>
+            View port details
+          </button>
+        </div>
+      )}
       <div className="design-hero hero-grid">
         <div>
           <div className="survey-kicker">Go-Live</div>
@@ -280,6 +321,7 @@ export default function GoLive({ jobId }) {
           <div className="export-menu-panel">
             <button type="button" onClick={() => exportGoLiveDoc(golive, job || {}, provision)}>Export Word</button>
             <button type="button" onClick={() => exportGoLiveHtml(golive, job || {}, provision)}>Export HTML</button>
+            <button type="button" onClick={() => exportHandoffDoc(golive, job || {}, provision, job?.supportEmail || '')}>Customer Handoff Doc</button>
             <button type="button" onClick={reset}>Clear Go-Live</button>
           </div>
         </details>
@@ -333,6 +375,34 @@ export default function GoLive({ jobId }) {
               </div>
             </div>
             <div className="section-modal-body">
+              {activePanel === 'port' && (
+                <div className="foc-tracker">
+                  <div className="foc-tracker-note">
+                    Port order tracking. Fields sync with the cockpit Port card — enter once, visible everywhere.
+                  </div>
+                  <div className="design-fields">
+                    <label><span>Carrier</span><input value={port.carrier} onChange={e => patchPort({ carrier: e.target.value })} placeholder="Bandwidth, Twilio…" /></label>
+                    <label><span>Order #</span><input value={port.orderNumber} onChange={e => patchPort({ orderNumber: e.target.value })} placeholder="LSR or port order number" /></label>
+                    <label><span>Submitted date</span><input type="date" value={port.submittedDate} onChange={e => patchPort({ submittedDate: e.target.value })} /></label>
+                    <label><span>FOC date</span><input type="date" value={port.focDate} onChange={e => patchPort({ focDate: e.target.value })} /></label>
+                    <label><span>Porting window</span><input value={port.portingWindow} onChange={e => patchPort({ portingWindow: e.target.value })} placeholder="e.g. 9am–11am CT" /></label>
+                    <label><span>Day-of contact</span><input value={port.dayOfContact} onChange={e => patchPort({ dayOfContact: e.target.value })} placeholder="Name + phone for port day escalation" /></label>
+                    <div className="foc-tracker-checks">
+                      <label className="foc-check-label">
+                        <input type="checkbox" checked={Boolean(port.csrVerified)} onChange={e => patchPort({ csrVerified: e.target.checked })} />
+                        CSR verified — customer service record matches port order exactly
+                      </label>
+                      <label className="foc-check-label">
+                        <input type="checkbox" checked={Boolean(port.focConfirmed)} onChange={e => patchPort({ focConfirmed: e.target.checked })} />
+                        FOC confirmed — carrier has acknowledged the FOC date in writing
+                      </label>
+                    </div>
+                    <label className="span-2"><span>Rollback plan</span><textarea value={port.rollbackPlan} onChange={e => patchPort({ rollbackPlan: e.target.value })} placeholder="If port fails: revert DID routing to old carrier, contact day-of contact at…" rows={3} /></label>
+                    <label className="span-2"><span>DIDs to port</span><textarea value={(port.dids || []).join('\n')} onChange={e => patchPort({ dids: e.target.value.split('\n').map(s => s.trim()).filter(Boolean) })} placeholder="One number per line" rows={5} /></label>
+                    <label className="span-2"><span>Notes</span><textarea value={port.notes} onChange={e => patchPort({ notes: e.target.value })} rows={3} /></label>
+                  </div>
+                </div>
+              )}
               {activePanel === 'cutover' && (
                 <div className="design-fields">
                   <label><span>Port date</span><input value={golive.cutover.portDate} onChange={e => updateCutover('portDate', e.target.value)} placeholder="2026-08-01" /></label>
@@ -418,6 +488,13 @@ export default function GoLive({ jobId }) {
                   <div className="btn-row span-2 no-print">
                     <button type="button" className="btn btn-secondary" onClick={() => window.print()}>
                       Print / Save as PDF
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => exportHandoffDoc(golive, job || {}, provision, job?.supportEmail || '')}
+                    >
+                      Export Customer Handoff Doc
                     </button>
                   </div>
                   <label>

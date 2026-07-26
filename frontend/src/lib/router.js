@@ -35,6 +35,9 @@ function parseHash(hash) {
   } else if (segments[0] === 'account' && segments[1]) {
     name = 'account'
     params.accountId = segments[1]
+  } else if (segments[0] === 'portal' && segments[1]) {
+    name = 'portal'
+    params.accountId = segments[1]
   } else if (segments[0] === 'job' && segments[1]) {
     params.jobId = segments[1]
     const section = segments[2]

@@ -17,6 +17,12 @@ const ALGO_MODELS = [
 
 const CODECS = ['G.711 PCMU (recommended)', 'G.711 PCMA', 'G.722']
 
+const TRANSPORTS = [
+  { id: 'UDP', label: 'UDP (default — most deployments)' },
+  { id: 'TCP', label: 'TCP (preferred for unreliable links)' },
+  { id: 'TLS', label: 'TLS (encrypted signaling — requires cert on SBC)' },
+]
+
 const DEFAULT_MULTICAST = '224.1.1.1'
 const DEFAULT_MCAST_PORT = '10000'
 
@@ -42,6 +48,8 @@ export default function AlgoConfig() {
   const [sipProxy, setSipProxy] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [codec, setCodec] = useState(CODECS[0])
+  const [transport, setTransport] = useState('UDP')
+  const [sipPort, setSipPort] = useState('5060')
   const [multicastIp, setMulticastIp] = useState(DEFAULT_MULTICAST)
   const [multicastPort, setMulticastPort] = useState(DEFAULT_MCAST_PORT)
   const [useMulticast, setUseMulticast] = useState(true)
@@ -68,8 +76,8 @@ SIP_AuthPassword = ${password || '<password>'}
 SIP_DisplayName = ${displayName || ext}
 SIP_ProxyServer = ${sipProxy}
 SIP_RegistrarServer = ${sipProxy}
-SIP_Transport = UDP
-SIP_Port = 5060
+SIP_Transport = ${transport}
+SIP_Port = ${sipPort}
 SIP_Codec = ${codecShort}
 SIP_DTMF = RFC2833`
 
@@ -158,6 +166,38 @@ multicastpaging.listen_address.1.label = Paging`
               {CODECS.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
+          <div className="ac-field-row">
+            <div className="ac-field">
+              <label className="ac-label">SIP Transport</label>
+              <select
+                className="ac-select"
+                value={transport}
+                onChange={e => {
+                  const t = e.target.value
+                  setTransport(t)
+                  setSipPort(t === 'TLS' ? '5061' : '5060')
+                }}
+              >
+                {TRANSPORTS.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+              </select>
+            </div>
+            <div className="ac-field" style={{ maxWidth: 120 }}>
+              <label className="ac-label">SIP Port</label>
+              <input
+                className="ac-input"
+                type="number"
+                min="1"
+                max="65535"
+                value={sipPort}
+                onChange={e => setSipPort(e.target.value)}
+              />
+            </div>
+          </div>
+          {transport === 'TLS' && (
+            <div className="ac-note-inline">
+              TLS requires a valid certificate on the SBC/PBX side. Confirm the Algo firmware supports TLS and that the CA cert is installed on the device. Port 5061 is the IANA default.
+            </div>
+          )}
 
           <div className="ac-section-label" style={{ marginTop: 24 }}>Multicast Paging</div>
           <div className="ac-toggle-row">
@@ -221,7 +261,7 @@ multicastpaging.listen_address.1.label = Paging`
       ) : (
         <div className="ac-results">
           <div className="ac-result-intro">
-            Config for <strong>{selectedModel?.label}</strong> · Extension <strong>{ext}</strong> · Proxy <strong>{sipProxy}</strong>
+            Config for <strong>{selectedModel?.label}</strong> · Extension <strong>{ext}</strong> · Proxy <strong>{sipProxy}</strong> · Transport <strong>{transport}/{sipPort}</strong>
           </div>
 
           <div className="ac-block">

@@ -6,12 +6,14 @@ import { useEffect, useState } from 'react'
 import AlgoConfig from './AlgoConfig.jsx'
 import PortChecklist from './PortChecklist.jsx'
 import QuickCard from './QuickCard.jsx'
+import CarrierTemplates from './CarrierTemplates.jsx'
 import { navigate } from '../lib/router.js'
 
 const TABS = [
   { id: 'algo', label: 'Algo' },
   { id: 'ports', label: 'Ports' },
   { id: 'quickcard', label: 'QuickCard' },
+  { id: 'carriers', label: 'Carriers' },
 ]
 
 function normalizeTab(tab) {
@@ -19,6 +21,7 @@ function normalizeTab(tab) {
   if (id === 'ports' || id === 'port') return 'ports'
   if (id === 'quickcard' || id === 'quick' || id === 'card') return 'quickcard'
   if (id === 'algo') return 'algo'
+  if (id === 'carriers' || id === 'carrier') return 'carriers'
   return 'algo'
 }
 
@@ -39,7 +42,7 @@ export default function ToolsConfig({ tab } = {}) {
       <header className="tools-page-header">
         <div className="survey-kicker">Tools</div>
         <h1>Config</h1>
-        <p>Algo paging builders, firewall ports, and end-user quick cards.</p>
+        <p>Algo paging builders, firewall ports, end-user quick cards, and carrier SIP trunk templates.</p>
       </header>
 
       <div className="tools-subtabs" role="tablist" aria-label="Config tools">
@@ -61,6 +64,7 @@ export default function ToolsConfig({ tab } = {}) {
         {active === 'algo' && <AlgoConfig />}
         {active === 'ports' && <PortChecklist />}
         {active === 'quickcard' && <QuickCard />}
+        {active === 'carriers' && <CarrierTemplates />}
       </div>
     </div>
   )

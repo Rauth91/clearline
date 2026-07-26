@@ -26,6 +26,7 @@ function esc(value) {
 
 const DEFAULT_INSTALL_ITEMS = [
   { id: 'vlan', label: 'Voice VLAN confirmed', done: false, notes: '', doneAt: null, doneBy: '', gated: false },
+  { id: 'qos', label: 'QoS / DSCP verified (EF 46 for RTP, CS3 24 for SIP) — verify, do not block', done: false, notes: '', doneAt: null, doneBy: '', gated: false },
   { id: 'phones', label: 'Phones staged / labeled', done: false, notes: '', doneAt: null, doneBy: '', gated: false },
   { id: 'program', label: 'PBX programming spot-checked', done: false, notes: '', doneAt: null, doneBy: '', gated: false },
   { id: 'e911-locs', label: 'E911 locations verified in carrier portal', done: false, notes: '', doneAt: null, doneBy: '', gated: true },
@@ -34,7 +35,7 @@ const DEFAULT_INSTALL_ITEMS = [
   { id: 'smoke', label: 'Inbound / outbound smoke tests passed', done: false, notes: '', doneAt: null, doneBy: '', gated: false },
 ]
 
-const REMOVED_INSTALL_IDS = new Set(['qos', 'poe', 'mdf'])
+const REMOVED_INSTALL_IDS = new Set(['poe', 'mdf'])
 
 export function createEmptyGoLive() {
   return {
@@ -247,6 +248,165 @@ export function buildGoLiveHtmlReport(golive, meta = {}, provision = {}, options
   </section>
 </body>
 </html>`
+}
+
+export function buildHandoffHtml(golive, job = {}, provision = {}, supportEmail = '') {
+  const data = mergeGoLive(golive)
+  const customer = esc(job.customer || job.name || 'Your Company')
+  const site = esc(job.site || '')
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+
+  const mainNumbers = (provision.mainNumbers || [])
+    .filter(n => String(n.number || n.label || '').trim())
+    .map(n => `<tr><td>${esc(n.label || '—')}</td><td class="mono">${esc(n.number || '—')}</td><td>${esc(n.notes || '')}</td></tr>`)
+    .join('')
+
+  const users = (provision.users || [])
+    .map(u => `<tr><td>${esc(u.name)}</td><td class="mono">${esc(u.extension)}</td><td class="mono">${esc(u.did || '')}</td><td>${esc(u.role || '')}</td><td>${u.voicemail ? 'Yes' : ''}</td></tr>`)
+    .join('')
+
+  const aaRows = (provision.aaOptions || [])
+    .map(o => `<tr><td class="mono">Press ${esc(o.digit)}</td><td>${esc(o.action)}</td></tr>`)
+    .join('')
+
+  const adminName = esc(data.handoff.adminName || '')
+  const adminPhone = esc(data.handoff.adminPhone || '')
+  const adminEmail = esc(data.handoff.adminEmail || '')
+  const escalation = esc(data.handoff.supportEscalation || '').replace(/\n/g, '<br>')
+  const notes = esc(data.handoff.notes || '').replace(/\n/g, '<br>')
+  const supportHtml = supportEmail
+    ? `<a href="mailto:${esc(supportEmail)}">${esc(supportEmail)}</a>`
+    : ''
+
+  // Night button / hours note
+  const hoursNote = (() => {
+    const h = provision.hours
+    if (!h) return ''
+    const hasOpen = h.open && String(h.open).trim()
+    const hasClose = h.close && String(h.close).trim()
+    if (!hasOpen && !hasClose) return ''
+    return `<p>Business hours: <strong>${esc(h.open || '')} – ${esc(h.close || '')}</strong>. After hours, callers are routed to voicemail or an after-hours auto attendant — no action needed on your end.</p>`
+  })()
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Phone System Handoff — ${customer}</title>
+<style>
+  @page { size: letter; margin: 0.7in 0.75in; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; color: #1a1a1a; background: #fff; margin: 0; padding: 32px 40px; line-height: 1.5; font-size: 14px; }
+  @media print { body { padding: 0; } }
+  .header { display: flex; align-items: flex-start; justify-content: space-between; border-bottom: 2px solid #e5e5ea; padding-bottom: 16px; margin-bottom: 28px; }
+  .header-left {}
+  .brand { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #6e6e73; font-weight: 700; margin-bottom: 6px; }
+  h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.03em; margin: 0 0 4px; }
+  .site { color: #6e6e73; font-size: 13px; }
+  .date { font-size: 12px; color: #6e6e73; text-align: right; margin-top: 4px; }
+  h2 { font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: #6e6e73; font-weight: 600; margin: 28px 0 10px; border-bottom: 1px solid #e5e5ea; padding-bottom: 5px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #f0f0f5; vertical-align: top; font-size: 13px; }
+  th { font-weight: 600; color: #6e6e73; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; background: #f9f9fb; }
+  .mono { font-family: 'SF Mono', 'Menlo', 'Fira Mono', monospace; font-size: 12px; }
+  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px; }
+  .meta-item label { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: #6e6e73; font-weight: 600; display: block; margin-bottom: 2px; }
+  .meta-item p { margin: 0; font-size: 13px; }
+  .help-box { background: #f0f9ff; border-left: 3px solid #3b82f6; padding: 14px 16px; border-radius: 4px; margin-top: 20px; font-size: 13px; }
+  .help-box strong { display: block; margin-bottom: 4px; }
+  .vm-steps { margin: 8px 0 0 0; padding-left: 20px; }
+  .vm-steps li { margin-bottom: 4px; }
+  .footer { margin-top: 36px; border-top: 1px solid #e5e5ea; padding-top: 14px; color: #6e6e73; font-size: 11px; display: flex; justify-content: space-between; }
+  .muted { color: #6e6e73; font-style: italic; }
+  a { color: #2563eb; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="brand">ClearLine · Phone System</div>
+    <h1>${customer}</h1>
+    ${site ? `<div class="site">${site}</div>` : ''}
+  </div>
+  <div class="date">Handoff document<br>${today}</div>
+</div>
+
+<h2>Main phone numbers</h2>
+${mainNumbers
+  ? `<table><thead><tr><th>Label</th><th>Number</th><th>Notes</th></tr></thead><tbody>${mainNumbers}</tbody></table>`
+  : '<p class="muted">No numbers documented — contact your provider.</p>'}
+
+${users ? `
+<h2>Extension directory</h2>
+<table>
+  <thead><tr><th>Name</th><th>Ext</th><th>Direct number</th><th>Role</th><th>Voicemail</th></tr></thead>
+  <tbody>${users}</tbody>
+</table>` : ''}
+
+${aaRows ? `
+<h2>Auto attendant menu</h2>
+<table><tbody>${aaRows}</tbody></table>` : ''}
+
+<h2>Voicemail access</h2>
+<p>To check your voicemail from your desk phone:</p>
+<ol class="vm-steps">
+  <li>Press the <strong>Messages</strong> button (envelope icon) or dial <strong>*97</strong></li>
+  <li>Enter your extension number when prompted, then your PIN</li>
+  <li>Follow the menu prompts to listen, delete, or save messages</li>
+</ol>
+<p>To check voicemail from outside the office, dial your main number and press <strong>#</strong> during the greeting, then enter your extension and PIN.</p>
+
+${hoursNote}
+
+<h2>After-hours &amp; night mode</h2>
+<p>Your system automatically switches to after-hours routing based on your configured business hours. If you need to manually toggle night mode (for holidays or unexpected closures), press the <strong>Night</strong> button on the designated front-desk phone, or contact your provider.</p>
+
+<h2>Your admin contact</h2>
+<div class="meta-grid">
+  ${adminName ? `<div class="meta-item"><label>Name</label><p>${adminName}</p></div>` : ''}
+  ${adminPhone ? `<div class="meta-item"><label>Phone</label><p>${adminPhone}</p></div>` : ''}
+  ${adminEmail ? `<div class="meta-item"><label>Email</label><p><a href="mailto:${adminEmail}">${adminEmail}</a></p></div>` : ''}
+</div>
+
+${escalation ? `
+<h2>Support escalation</h2>
+<p>${escalation}</p>` : ''}
+
+${notes ? `
+<h2>Notes</h2>
+<p>${notes}</p>` : ''}
+
+<div class="help-box">
+  <strong>Need help?</strong>
+  ${supportHtml ? `Email us at ${supportHtml} and we'll take care of it.` : 'Contact your provider for any questions or changes.'}
+</div>
+
+<div class="footer">
+  <span>${customer} · Phone system handoff · ${today}</span>
+  <span>Powered by ClearLine</span>
+</div>
+
+</body>
+</html>`
+}
+
+export function exportHandoffDoc(golive, job, provision, supportEmail) {
+  const html = buildHandoffHtml(golive, job, provision, supportEmail)
+  const filename = (() => {
+    const name = (job?.customer || job?.name || 'go-live')
+      .replace(/\W+/g, '_').replace(/^_|_$/g, '').toLowerCase() || 'go-live'
+    return `${name}-handoff-${new Date().toISOString().slice(0, 10)}.html`
+  })()
+  const win = window.open('', '_blank')
+  if (win) {
+    win.document.open()
+    win.document.write(html)
+    win.document.close()
+  } else {
+    downloadBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), filename)
+  }
 }
 
 export function exportGoLiveHtml(golive, meta, provision) {

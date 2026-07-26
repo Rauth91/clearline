@@ -130,6 +130,49 @@ const BY_ID = {
   'call-dial-plan': { task: 'Calls & Transfers', models: ALL },
   'call-interdigit': { task: 'Calls & Transfers', models: ALL },
   'call-max-calls': { task: 'Calls & Transfers', models: ALL },
+
+  // BLF / Presence
+  'blf-subscribe-period': {
+    task: 'Calls & Transfers',
+    models: DESK_MODELS,
+    caveat: 'Set subscribe_period ≤ SIP registration expiry. If BLF keys go dark after some time, this value is too high or the server is not sending NOTIFY refreshes.',
+  },
+  'blf-pickup-enable': {
+    task: 'Park & Pickup',
+    models: DESK_MODELS,
+    caveat: 'Requires the pickup code to be enabled on the PBX. For NetSapiens: *8 + extension (directed pickup). Confirm the feature code in NS admin before provisioning.',
+  },
+  'blf-alert-tone': {
+    task: 'Calls & Transfers',
+    models: DESK_MODELS,
+    caveat: 'BLF alert tones can be disruptive in open offices. Consider disabling on phones not used for reception.',
+  },
+  'blf-ns-list-subscription': {
+    task: 'Calls & Transfers',
+    models: DESK_MODELS,
+    caveat: 'NS XML presence list must be configured in NS admin → Domain → Presence before this will work. Confirm the list URI with your NS admin. Individual BLF SUBSCRIBE still works if the list URI is wrong — the phone falls back gracefully.',
+  },
+  'blf-led-behavior': {
+    task: 'Keys & Display',
+    models: DESK_MODELS,
+    caveat: 'LED color values vary slightly across T3x/T4x/T5x firmware. Test on a physical phone after provisioning. Do not change these unless the default LED behavior is incorrect.',
+  },
+
+  // Call Park
+  'callpark-settings': {
+    task: 'Park & Pickup',
+    models: DESK_MODELS,
+    caveat: 'Verify NS feature codes in NS admin → Domain → Feature Codes. Default NS park is *68, retrieve is *88 — these can be customized per domain. Mismatch between phone and NS codes is the most common park failure.',
+  },
+  'callpark-orbit-blf': {
+    task: 'Park & Pickup',
+    models: DESK_MODELS,
+    caveat: 'Park orbit monitoring requires NS to expose the orbit as a subscribable presence resource. Test BLF LED behavior with a parked call before considering this complete.',
+  },
+  'callpark-audio-notify': {
+    task: 'Park & Pickup',
+    models: DESK_MODELS,
+  },
 }
 
 const CATEGORY_FALLBACK_TASK = {
@@ -143,6 +186,8 @@ const CATEGORY_FALLBACK_TASK = {
   Security: 'Provisioning & Reset',
   Provisioning: 'Provisioning & Reset',
   'Call Settings': 'Calls & Transfers',
+  'BLF / Presence': 'Calls & Transfers',
+  'Call Park': 'Park & Pickup',
 }
 
 /**
