@@ -68,6 +68,7 @@ const QuickCard = lazy(() => import('./components/QuickCard.jsx'))
 const CodecRef = lazy(() => import('./components/CodecRef.jsx'))
 const CarrierTemplates = lazy(() => import('./components/CarrierTemplates.jsx'))
 const MetaToNs = lazy(() => import('./components/MetaToNs.jsx'))
+const MigrationWorkspace = lazy(() => import('./components/MigrationWorkspace.jsx'))
 
 const WORKSPACES = [
   { id: 'siteSurvey', label: 'Site Survey', description: 'Field handoff and readiness', route: 'survey' },
@@ -102,6 +103,7 @@ const SECTION_LABELS = {
   design: 'System Design',
   golive: 'Go-Live',
   runbook: 'Runbook',
+  migration: 'Migration',
 }
 
 const TOOL_LABELS = {
@@ -326,7 +328,7 @@ export default function App() {
     return 'Survey. Design. Go live.'
   })()
 
-  const inJobSection = ['cockpit', 'survey', 'design', 'golive', 'runbook'].includes(route.name)
+  const inJobSection = ['cockpit', 'survey', 'design', 'golive', 'runbook', 'migration'].includes(route.name)
   const inTools = route.name === 'tool' || String(route.name).startsWith('tools')
 
   // Customer portal — no auth required, no app chrome
@@ -438,13 +440,22 @@ export default function App() {
               <div className="sidebar-divider" />
               <div className="sidebar-sub-section">
                 <span className="sidebar-section-label">{job?.customer || 'Current job'}</span>
+                <span className={`sidebar-job-type-badge${job?.jobType === 'migration' ? ' is-migration' : ' is-install'}`}>
+                  {job?.jobType === 'migration' ? 'Migration' : 'New Install'}
+                </span>
                 <button type="button" className={`sidebar-sub-item${route.name === 'cockpit' ? ' is-active' : ''}`} onClick={() => navigate(`/job/${jobId}`)}>Cockpit</button>
-                {WORKSPACES.map(ws => (
-                  <button key={ws.id} type="button" className={`sidebar-sub-item${route.name === ws.route ? ' is-active' : ''}`} onClick={() => navigate(`/job/${jobId}/${ws.route}`)}>
-                    {ws.label}
-                  </button>
-                ))}
-                <button type="button" className={`sidebar-sub-item${route.name === 'runbook' ? ' is-active' : ''}`} onClick={() => navigate(`/job/${jobId}/runbook`)}>Runbook</button>
+                {job?.jobType === 'migration' ? (
+                  <button type="button" className={`sidebar-sub-item${route.name === 'migration' ? ' is-active' : ''}`} onClick={() => navigate(`/job/${jobId}/migration`)}>Migration</button>
+                ) : (
+                  <>
+                    {WORKSPACES.map(ws => (
+                      <button key={ws.id} type="button" className={`sidebar-sub-item${route.name === ws.route ? ' is-active' : ''}`} onClick={() => navigate(`/job/${jobId}/${ws.route}`)}>
+                        {ws.label}
+                      </button>
+                    ))}
+                    <button type="button" className={`sidebar-sub-item${route.name === 'runbook' ? ' is-active' : ''}`} onClick={() => navigate(`/job/${jobId}/runbook`)}>Runbook</button>
+                  </>
+                )}
               </div>
             </>
           )}
@@ -569,6 +580,7 @@ export default function App() {
               {route.name === 'runbook' && jobId && (
                 <Runbook jobId={jobId} doneBy={profile?.display_name || ''} />
               )}
+              {route.name === 'migration' && jobId && <MigrationWorkspace jobId={jobId} />}
               {route.name === 'tool' && route.params.toolId === 'calldiag' && <CallDiagnostic />}
               {route.name === 'tool' && route.params.toolId === 'pcap' && <PacketCapture />}
               {route.name === 'tool' && route.params.toolId === 'netcheck' && <NetworkCheck />}

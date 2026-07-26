@@ -110,6 +110,7 @@ function toJobMeta(job) {
     site: job.site || '',
     ticket: job.ticket || '',
     stage: job.stage || 'survey',
+    jobType: job.jobType || 'install',
     assigned_to: job.assigned_to ?? null,
     org_id: job.org_id ?? null,
     createdAt: job.createdAt || '',
@@ -132,6 +133,7 @@ function emptyJobRecord(patch = {}) {
     site: patch.site || '',
     ticket: patch.ticket || '',
     stage: patch.stage || 'survey',
+    jobType: patch.jobType || 'install',
     assigned_to: patch.assigned_to ?? null,
     org_id: patch.org_id ?? null,
     survey: patch.survey ?? createEmptySurvey(),
@@ -523,6 +525,7 @@ export function createJob(patch = {}) {
     customer: patch.customer || '',
     site: patch.site || '',
     ticket: patch.ticket || '',
+    jobType: patch.jobType || 'install',
     assigned_to: patch.assigned_to ?? null,
     account_id: patch.account_id ?? null,
     foc_date: patch.foc_date ?? null,
@@ -874,6 +877,27 @@ export function saveJobDesign(jobId, design) {
       baseRev: next.design_rev ?? 0,
       payload: design,
     },
+  }))
+  return { ok: true }
+}
+
+export function loadJobMigration(jobId) {
+  if (!jobId) return null
+  requireReady()
+  return getJobRecord(jobId)?.migration ?? null
+}
+
+export function saveJobMigration(jobId, migration) {
+  requireReady()
+  if (!jobId) return { ok: false }
+  const job = getJobRecord(jobId)
+  if (!job) return { ok: false }
+  const next = { ...job, migration, updatedAt: nowIso() }
+  _jobsCache.set(jobId, next)
+  schedulePersist(persistJob(next, {
+    type: 'job.section',
+    entityId: jobId,
+    payload: { jobId, section: 'migration', baseRev: 0, payload: migration },
   }))
   return { ok: true }
 }

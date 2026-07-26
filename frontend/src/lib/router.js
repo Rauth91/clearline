@@ -46,6 +46,7 @@ function parseHash(hash) {
     else if (section === 'design') name = 'design'
     else if (section === 'golive') name = 'golive'
     else if (section === 'runbook') name = 'runbook'
+    else if (section === 'migration') name = 'migration'
     else name = 'cockpit'
   } else if (segments[0] === 'tools') {
     const tool = segments[1] || 'calldiag'

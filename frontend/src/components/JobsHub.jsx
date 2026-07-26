@@ -23,7 +23,7 @@ import { onDataChanged } from '../lib/dataEvents.js'
 import { FEATURES } from '../lib/features.js'
 import JobDayNarrative from './JobDayNarrative.jsx'
 
-const EMPTY_FORM = { customer: '', site: '', ticket: '', account_id: '' }
+const EMPTY_FORM = { customer: '', site: '', ticket: '', account_id: '', jobType: 'install' }
 
 const STAGE_LABELS = {
   survey: 'Survey',
@@ -179,6 +179,7 @@ export default function JobsHub({
       customer: form.customer.trim() || acct?.name || 'New job',
       site: form.site.trim() || acct?.site || '',
       ticket: form.ticket.trim(),
+      jobType: form.jobType || 'install',
       assigned_to: profile?.id || null,
       account_id: accountId,
     })
@@ -357,7 +358,9 @@ export default function JobsHub({
             <article key={job.id} className="job-card">
               <button type="button" className="job-card-main" onClick={() => handleOpen(job)}>
                 <div className="job-card-top">
-                  <div className="survey-kicker">Job</div>
+                  <div className={`survey-kicker job-type-kicker${job.jobType === 'migration' ? ' is-migration' : ''}`}>
+                    {job.jobType === 'migration' ? 'Migration' : 'New Install'}
+                  </div>
                   <div className="job-card-meta-row">
                     <span className="job-stage-badge">{stageLabel}</span>
                     <span className="job-assignee-avatar" title={assigneeName || 'Unassigned'} aria-hidden="true">
@@ -371,9 +374,15 @@ export default function JobsHub({
                 <h2>{job.customer || 'Untitled customer'}</h2>
                 <p>{job.site || 'Site TBD'}</p>
                 <div className="job-badges">
-                  <span className={done.survey ? 'job-badge is-done' : 'job-badge'}>Survey</span>
-                  <span className={done.design ? 'job-badge is-done' : 'job-badge'}>Design</span>
-                  <span className={done.golive ? 'job-badge is-done' : 'job-badge'}>Go-Live</span>
+                  {job.jobType === 'migration' ? (
+                    <span className="job-badge is-migration">Migration workflow</span>
+                  ) : (
+                    <>
+                      <span className={done.survey ? 'job-badge is-done' : 'job-badge'}>Survey</span>
+                      <span className={done.design ? 'job-badge is-done' : 'job-badge'}>Design</span>
+                      <span className={done.golive ? 'job-badge is-done' : 'job-badge'}>Go-Live</span>
+                    </>
+                  )}
                 </div>
                 <small className="job-updated">
                   Updated {relativeUpdated(job.updatedAt)}
@@ -443,6 +452,25 @@ export default function JobsHub({
             </div>
             <div className="section-modal-body">
               <form className="new-job-form" onSubmit={submitNewJob}>
+                <div className="field">
+                  <span>Job type</span>
+                  <div className="job-type-picker">
+                    {[
+                      { value: 'install', label: 'New Install', desc: 'Site survey → design → go-live' },
+                      { value: 'migration', label: 'Migration', desc: 'MCU → NetSapiens guided workflow' },
+                    ].map(t => (
+                      <button
+                        key={t.value}
+                        type="button"
+                        className={`job-type-card${form.jobType === t.value ? ' is-selected' : ''}`}
+                        onClick={() => setForm(f => ({ ...f, jobType: t.value }))}
+                      >
+                        <div className="job-type-card-label">{t.label}</div>
+                        <div className="job-type-card-desc">{t.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <label className="field">
                   <span>Account (optional)</span>
                   <select

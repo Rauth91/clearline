@@ -10867,3 +10867,605 @@ select {
 .mns-dl-row.is-blocked .mns-dl-name {
   color: var(--warn);
 }
+
+/* ── Migration Workspace ─────────────────────────────────── */
+.mig-root {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 20px 56px;
+}
+
+/* Phase tabs */
+.mig-phase-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  border-bottom: 2px solid var(--line);
+  padding-bottom: 0;
+}
+
+.mig-phase-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+
+.mig-phase-tab.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.mig-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: var(--bg2);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.mig-tab-badge.is-ok {
+  background: rgba(5,150,105,.12);
+  color: var(--ok);
+}
+
+/* Section accordion */
+.mig-section {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.mig-section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--bg1);
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s;
+}
+
+.mig-section-head:hover { background: var(--bg2); }
+
+.mig-section-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.mig-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: var(--bg2);
+  color: var(--muted);
+}
+
+.mig-badge.is-ok { background: rgba(5,150,105,.12); color: var(--ok); }
+.mig-badge.is-warn { background: rgba(220,38,38,.1); color: var(--err); }
+
+.mig-chevron {
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.mig-section-body {
+  padding: 16px;
+  border-top: 1px solid var(--line);
+  background: var(--bg1);
+}
+
+/* Field */
+.mig-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mig-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  letter-spacing: .02em;
+}
+
+.mig-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.mig-textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg0);
+  color: var(--ink);
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color .15s;
+}
+
+.mig-textarea:focus { border-color: var(--accent); }
+
+/* Inline table cells */
+.mig-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.mig-cell-input {
+  width: 100%;
+  min-width: 80px;
+  padding: 4px 7px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  outline: none;
+  transition: border-color .15s, background .15s;
+  box-sizing: border-box;
+}
+
+.mig-cell-input:focus {
+  border-color: var(--accent);
+  background: var(--bg0);
+}
+
+.mig-cell-mono { font-family: var(--mono, monospace); }
+
+.mig-cell-select {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  outline: none;
+}
+
+.mig-cell-select:focus { border-color: var(--accent); background: var(--bg0); }
+
+.mig-del-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  transition: color .15s, background .15s;
+}
+
+.mig-del-btn:hover { color: var(--err); background: rgba(220,38,38,.08); }
+
+/* Cards for AA / HG / BL */
+.mig-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 10px;
+  background: var(--bg0);
+}
+
+.mig-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.mig-card-title-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg1);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  outline: none;
+}
+
+.mig-card-title-input:focus { border-color: var(--accent); }
+
+/* Build phase */
+.mig-progress-bar-wrap {
+  height: 4px;
+  background: var(--line);
+  border-radius: 4px;
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+
+.mig-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width .4s ease;
+}
+
+.mig-progress-label {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+
+.mig-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  transition: opacity .15s;
+}
+
+.mig-check-row:last-child { border-bottom: none; }
+.mig-check-row.is-done { opacity: .6; }
+
+.mig-check-box {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: 2px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+  margin-top: 1px;
+  transition: background .15s, border-color .15s;
+}
+
+.mig-check-box.is-checked {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.mig-check-content { flex: 1; min-width: 0; }
+
+.mig-check-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.mig-check-detail {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.mig-done-btn {
+  border-color: var(--ok) !important;
+  color: var(--ok) !important;
+}
+
+.mig-phase { display: flex; flex-direction: column; gap: 0; }
+
+/* ── Wizard step indicator ───────────────────────────────── */
+.mig-wizard-steps {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 24px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.mig-wizard-step {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.mig-wizard-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid var(--line-strong);
+  background: var(--bg1);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .2s, border-color .2s, color .2s;
+  flex-shrink: 0;
+}
+
+.mig-wizard-step.is-active .mig-wizard-num {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.mig-wizard-step.is-done .mig-wizard-num {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #fff;
+}
+
+.mig-wizard-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 0 8px;
+  transition: color .2s;
+  white-space: nowrap;
+}
+
+.mig-wizard-step.is-active .mig-wizard-label { color: var(--accent); }
+.mig-wizard-step.is-done .mig-wizard-label   { color: var(--ok); }
+
+.mig-wizard-connector {
+  flex: 1;
+  min-width: 24px;
+  height: 2px;
+  background: var(--line-strong);
+  margin: 0 4px;
+}
+
+/* Wizard content */
+.mig-wizard-body {
+  background: var(--bg1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.mig-step-body {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.mig-step-desc {
+  font-size: 13px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Field groups */
+.mig-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--bg0);
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
+.mig-field-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.mig-field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+/* Count / warn inline badges */
+.mig-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mig-warn-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  height: 20px;
+  border-radius: 10px;
+  background: rgba(220,38,38,.1);
+  color: var(--err);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* System config sub-tabs */
+.mig-sys-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 2px solid var(--line);
+  padding-bottom: 0;
+  overflow-x: auto;
+}
+
+.mig-sys-tab {
+  display: flex;
+  align-items: center;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color .15s, border-color .15s;
+}
+
+.mig-sys-tab.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.mig-sys-panel {
+  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Build progress wrapper */
+.mig-build-progress {
+  padding: 14px 16px;
+  background: var(--bg0);
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
+/* Wizard bottom nav */
+.mig-wizard-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0 24px;
+}
+
+.mig-wizard-page {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── Job Types ───────────────────────────────────────────── */
+.job-type-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.job-type-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 2px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg0);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .15s, background .15s;
+}
+
+.job-type-card:hover {
+  border-color: var(--accent);
+}
+
+.job-type-card.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.job-type-card-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.job-type-card.is-selected .job-type-card-label {
+  color: var(--accent-ink);
+}
+
+.job-type-card-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* Type kicker on job cards */
+.job-type-kicker {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.job-type-kicker.is-migration {
+  color: #7c3aed;
+}
+
+/* Migration badge in job card badges row */
+.job-badge.is-migration {
+  background: rgba(124, 58, 237, .1);
+  color: #7c3aed;
+  border-color: rgba(124, 58, 237, .2);
+}
+
+/* Sidebar job type badge */
+.sidebar-job-type-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 10px;
+  margin: 0 10px 6px;
+}
+
+.sidebar-job-type-badge.is-install {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.sidebar-job-type-badge.is-migration {
+  background: rgba(124, 58, 237, .1);
+  color: #7c3aed;
+}
