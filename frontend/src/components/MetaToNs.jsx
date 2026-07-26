@@ -1,11 +1,14 @@
 /**
  * MetaToNs — Metaswitch Business Group → NetSapiens import builder.
  *
- * Drop in the Metaswitch CSV exports, fill customer settings,
- * and get back ready-to-import NetSapiens files. Runs 100% in-browser.
+ * Improvements:
+ * - Auto-detects export type from CSV headers (no need to match slot)
+ * - Configurable extension digit count (3-5)
+ * - Inline editable extension table with real-time collision detection
+ * - All conversion runs 100% in-browser — nothing leaves this computer.
  */
 
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 
 /* ── CSV helpers ──────────────────────────────────────────── */
 function parseCSV(text) {
@@ -45,6 +48,16 @@ function toCSV(cols, rows) {
   const lines = [cols.map(esc).join(',')]
   rows.forEach(r => lines.push(cols.map(c => esc(r[c])).join(',')))
   return lines.join('\r\n') + '\r\n'
+}
+
+/* ── Auto-detect file type from headers ───────────────────── */
+function detectType(rows) {
+  if (!rows || !rows.length) return null
+  const keys = new Set(Object.keys(rows[0]))
+  if (keys.has('MAC Address') && keys.has('Device Model') && keys.has('Subscriber Directory Number')) return 'devices'
+  if (keys.has('Directory number') && keys.has('Name')) return 'lines'
+  if (keys.has('Directory number')) return 'dns'
+  return null
 }
 
 /* ── Column definitions ───────────────────────────────────── */
@@ -110,6 +123,7 @@ function mapModel(m) {
 function transform(lines, devices, dns, cfg) {
   const review = []
   const flag = (issue, key, detail, action) => review.push({ Issue: issue, Key: key, Detail: detail, 'Action Needed': action })
+  const { extDigits = 4, extOverrides = {} } = cfg
 
   const devByDN = {}
   devices.forEach(d => {
@@ -122,7 +136,9 @@ function transform(lines, devices, dns, cfg) {
   lines.forEach(ln => {
     const dn = normDN(ln['Directory number'])
     if (!dn) { flag('Line with no DN', '', '(blank directory number)', 'Check the Metaswitch export'); return }
-    const ext = dn.slice(-4)
+
+    const ext = extOverrides[dn] || dn.slice(-parseInt(extDigits, 10))
+
     if (seenExt[ext] && seenExt[ext] !== dn)
       flag('Extension collision', ext, seenExt[ext] + ' and ' + dn + ' both map to ' + ext, 'Give one a different extension before import')
     seenExt[ext] = dn
@@ -202,7 +218,13 @@ function downloadCSV(name, text) {
 }
 
 /* ── FileSlot component ───────────────────────────────────── */
-function FileSlot({ label, fileKey, required, rows, onLoad }) {
+const SLOT_META = {
+  lines: { label: 'Business Group — Lines', hint: 'Directory number + Name columns' },
+  devices: { label: 'Business Group — Managed Devices', hint: 'MAC Address + Device Model columns' },
+  dns: { label: 'Business Group — Available DNs', hint: 'Optional — spare number list' },
+}
+
+function FileSlot({ label, hint, fileKey, required, rows, onLoad }) {
   const inputRef = useRef()
   const [dragging, setDragging] = useState(false)
   const loaded = rows !== null
@@ -219,7 +241,7 @@ function FileSlot({ label, fileKey, required, rows, onLoad }) {
 
   return (
     <div
-      className={`mns-slot${loaded ? ' is-loaded' : ''}${dragging ? ' is-drag' : ''}${!required ? ' is-optional' : ''}`}
+      className={`mns-slot${loaded ? ' is-loaded' : ''}${dragging ? ' is-dragging' : ''}`}
       onClick={() => inputRef.current?.click()}
       onDragOver={e => { e.preventDefault(); setDragging(true) }}
       onDragLeave={() => setDragging(false)}
@@ -229,7 +251,7 @@ function FileSlot({ label, fileKey, required, rows, onLoad }) {
       <div className="mns-slot-text">
         <div className="mns-slot-name">{label}</div>
         <div className="mns-slot-meta">
-          {loaded ? `${rows.length} rows loaded` : 'Click or drag CSV here'}
+          {loaded ? `${rows.length} rows loaded` : hint}
         </div>
       </div>
       <span className="mns-slot-tag">{required ? 'required' : 'optional'}</span>
@@ -244,31 +266,158 @@ function FileSlot({ label, fileKey, required, rows, onLoad }) {
   )
 }
 
+/* ── Extension preview/editor ─────────────────────────────── */
+function ExtEditor({ lines, extDigits, extOverrides, onChange }) {
+  if (!lines || !lines.length) return null
+
+  const rows = lines
+    .map(ln => {
+      const dn = normDN(ln['Directory number'])
+      if (!dn) return null
+      const auto = dn.slice(-parseInt(extDigits, 10))
+      const ext = extOverrides[dn] !== undefined ? extOverrides[dn] : auto
+      return { dn, ext, auto, name: ln['Name'] || '' }
+    })
+    .filter(Boolean)
+
+  // Collision detection
+  const counts = {}
+  rows.forEach(r => { counts[r.ext] = (counts[r.ext] || 0) + 1 })
+  const collisions = new Set(Object.keys(counts).filter(e => counts[e] > 1))
+
+  const hasCollisions = collisions.size > 0
+  const hasOverrides = Object.keys(extOverrides).length > 0
+
+  return (
+    <div className="mns-ext-editor">
+      <div className="mns-ext-editor-head">
+        <span>
+          {rows.length} lines · {hasCollisions
+            ? <span className="mns-ext-warn">{collisions.size} collision{collisions.size > 1 ? 's' : ''} — fix before building</span>
+            : <span className="mns-ext-ok">No collisions</span>}
+        </span>
+        {hasOverrides && (
+          <button type="button" className="btn btn-secondary mns-ext-reset"
+            onClick={() => onChange({})}>
+            Reset to auto
+          </button>
+        )}
+      </div>
+      <div className="mns-ext-table-wrap">
+        <table className="mns-table mns-ext-table">
+          <thead>
+            <tr>
+              <th>DN</th>
+              <th>Name</th>
+              <th>Extension</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => {
+              const isCollision = collisions.has(r.ext)
+              const isOverridden = extOverrides[r.dn] !== undefined
+              return (
+                <tr key={r.dn} className={isCollision ? 'mns-row-collision' : ''}>
+                  <td className="mns-td-mono">{r.dn}</td>
+                  <td>{r.name}</td>
+                  <td>
+                    <input
+                      className={`mns-ext-input${isCollision ? ' is-collision' : ''}${isOverridden ? ' is-overridden' : ''}`}
+                      value={r.ext}
+                      onChange={e => {
+                        const val = e.target.value.replace(/\D/g, '').slice(0, 8)
+                        onChange(prev => {
+                          const next = { ...prev }
+                          if (val === r.auto) delete next[r.dn]
+                          else next[r.dn] = val
+                          return next
+                        })
+                      }}
+                    />
+                    {isCollision && <span className="mns-collision-badge">!</span>}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 /* ── Main component ───────────────────────────────────────── */
 const DEFAULT_CFG = {
   domain: '', area: '225', cidNum: '', cidName: '', e911: '',
   server: 'core2-ord', tz: 'US/Central', pin: '1234',
   scope: 'Basic User', dialPerm: 'US and Canada',
-  emailDom: '', timeout: '25', line2: true,
+  emailDom: '', timeout: '25', line2: true, extDigits: '4',
 }
+
+const FIELDS = [
+  { key: 'domain', label: 'Domain', req: true, placeholder: 'ACME-15730' },
+  { key: 'area', label: 'Area code', placeholder: '225' },
+  { key: 'cidNum', label: 'Caller ID number', placeholder: '2255551234' },
+  { key: 'cidName', label: 'Caller ID name', placeholder: 'Acme Corp' },
+  { key: 'e911', label: '911 caller ID', placeholder: 'same as caller ID number' },
+  { key: 'server', label: 'Server', placeholder: 'core2-ord' },
+  { key: 'tz', label: 'Timezone', placeholder: 'US/Central' },
+  { key: 'pin', label: 'Default voicemail PIN', placeholder: '1234' },
+  { key: 'scope', label: 'Scope', placeholder: 'Basic User' },
+  { key: 'dialPerm', label: 'Dial permission', placeholder: 'US and Canada' },
+  { key: 'emailDom', label: 'Email domain', placeholder: 'acme.com', hint: 'Builds first.last@domain. Blank = no email.' },
+  { key: 'timeout', label: 'Answer timeout', placeholder: '25' },
+]
 
 export default function MetaToNs() {
   const [files, setFiles] = useState({ lines: null, devices: null, dns: null })
   const [fileNames, setFileNames] = useState({ lines: '', devices: '', dns: '' })
   const [cfg, setCfg] = useState(DEFAULT_CFG)
+  const [extOverrides, setExtOverrides] = useState({})
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
+  const [autoDetectLog, setAutoDetectLog] = useState([])
 
-  function handleLoad(key, rows, name) {
-    setFiles(f => ({ ...f, [key]: rows }))
-    setFileNames(n => ({ ...n, [key]: name || '' }))
+  function handleLoad(slotKey, rows, name) {
+    if (!rows) {
+      setFiles(f => ({ ...f, [slotKey]: null }))
+      setFileNames(n => ({ ...n, [slotKey]: '' }))
+      return
+    }
+
+    // Auto-detect: if the file doesn't match the slot, put it in the right slot
+    const detected = detectType(rows)
+    const targetKey = detected || slotKey
+    const log = detected && detected !== slotKey
+      ? `"${name}" auto-detected as ${SLOT_META[detected]?.label ?? detected}`
+      : null
+
+    setFiles(f => ({ ...f, [targetKey]: rows }))
+    setFileNames(n => ({ ...n, [targetKey]: name || '' }))
     setResult(null)
     setError('')
+    setExtOverrides({})
+    if (log) setAutoDetectLog(prev => [...prev.slice(-2), log])
   }
 
   function setField(k, v) { setCfg(c => ({ ...c, [k]: v })) }
 
-  const canBuild = files.lines && files.devices && cfg.domain.trim()
+  // Recompute collision check for build button gating
+  const hasCollisions = useMemo(() => {
+    if (!files.lines) return false
+    const digits = parseInt(cfg.extDigits, 10) || 4
+    const seen = {}
+    for (const ln of files.lines) {
+      const dn = normDN(ln['Directory number'])
+      if (!dn) continue
+      const ext = extOverrides[dn] !== undefined ? extOverrides[dn] : dn.slice(-digits)
+      if (seen[ext] && seen[ext] !== dn) return true
+      seen[ext] = dn
+    }
+    return false
+  }, [files.lines, cfg.extDigits, extOverrides])
+
+  const canBuild = files.lines && files.devices && cfg.domain.trim() && !hasCollisions
 
   function handleBuild() {
     setError('')
@@ -277,13 +426,15 @@ export default function MetaToNs() {
     const needCols = ['Directory number', 'Name']
     const missing = needCols.filter(c => !(files.lines[0] && c in files.lines[0]))
     if (missing.length) {
-      setError(`The Lines file is missing columns: ${missing.join(', ')}. Check the Lines and Managed Devices files aren't swapped.`)
+      setError(`The Lines file is missing columns: ${missing.join(', ')}. Check that Lines and Managed Devices files aren't swapped.`)
       return
     }
 
     try {
       const R = transform(files.lines, files.devices, files.dns, {
         ...cfg,
+        extDigits: parseInt(cfg.extDigits, 10) || 4,
+        extOverrides,
         e911: cfg.e911.trim() || cfg.cidNum.trim(),
       })
       setResult(R)
@@ -312,38 +463,40 @@ export default function MetaToNs() {
         <div>
           <div className="survey-kicker">Tools · Config</div>
           <h1>Metaswitch → NetSapiens</h1>
-          <p>Drop in Business Group exports, fill the customer settings, and download ready-to-import NS files. Runs entirely in your browser — nothing leaves this computer.</p>
+          <p>Drop in Business Group exports, fill customer settings, and download ready-to-import NS files. Runs entirely in your browser — nothing leaves this computer.</p>
         </div>
       </div>
 
       {/* ── Step 1: File slots ───────────────────────────── */}
       <div className="mns-section">
-        <div className="mns-step-label">1 · Metaswitch exports</div>
+        <div className="mns-step-label">1 · Metaswitch exports — drop any file in any slot, auto-detection handles the rest</div>
         <div className="mns-slots">
-          <FileSlot label="Business Group — Lines" fileKey="lines" required rows={files.lines} onLoad={handleLoad} />
-          <FileSlot label="Business Group — Managed Devices" fileKey="devices" required rows={files.devices} onLoad={handleLoad} />
-          <FileSlot label="Business Group — Available DNs" fileKey="dns" required={false} rows={files.dns} onLoad={handleLoad} />
+          {(['lines', 'devices', 'dns']).map(k => (
+            <FileSlot
+              key={k}
+              fileKey={k}
+              label={SLOT_META[k].label}
+              hint={files[k] ? `${files[k].length} rows — ${fileNames[k]}` : SLOT_META[k].hint}
+              required={k !== 'dns'}
+              rows={files[k]}
+              onLoad={handleLoad}
+            />
+          ))}
         </div>
+        {autoDetectLog.length > 0 && (
+          <div className="mns-detect-log">
+            {autoDetectLog.map((msg, i) => (
+              <span key={i} className="mns-detect-chip">↙ {msg}</span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── Step 2: Settings ─────────────────────────────── */}
       <div className="mns-section">
         <div className="mns-step-label">2 · Customer settings</div>
         <div className="mns-grid">
-          {[
-            { key: 'domain', label: 'Domain', req: true, placeholder: 'ACME-15730' },
-            { key: 'area', label: 'Area code', placeholder: '225' },
-            { key: 'cidNum', label: 'Caller ID number', placeholder: '2255551234' },
-            { key: 'cidName', label: 'Caller ID name', placeholder: 'Acme Corp' },
-            { key: 'e911', label: '911 caller ID', placeholder: 'same as caller ID number' },
-            { key: 'server', label: 'Server', placeholder: 'core2-ord' },
-            { key: 'tz', label: 'Timezone', placeholder: 'US/Central' },
-            { key: 'pin', label: 'Default voicemail PIN', placeholder: '1234' },
-            { key: 'scope', label: 'Scope', placeholder: 'Basic User' },
-            { key: 'dialPerm', label: 'Dial permission', placeholder: 'US and Canada' },
-            { key: 'emailDom', label: 'Email domain', placeholder: 'acme.com', hint: 'Builds first.last@domain. Blank = no email.' },
-            { key: 'timeout', label: 'Answer timeout', placeholder: '25' },
-          ].map(({ key, label, req, placeholder, hint }) => (
+          {FIELDS.map(({ key, label, req, placeholder, hint }) => (
             <div key={key} className="mns-field">
               <label className="mns-label">{label}{req && <span className="mns-req"> *</span>}</label>
               <input
@@ -356,6 +509,19 @@ export default function MetaToNs() {
               {hint && <div className="mns-hint">{hint}</div>}
             </div>
           ))}
+          <div className="mns-field">
+            <label className="mns-label">Extension digits</label>
+            <select
+              className="mns-input"
+              value={cfg.extDigits}
+              onChange={e => { setField('extDigits', e.target.value); setExtOverrides({}) }}
+            >
+              <option value="3">Last 3 digits</option>
+              <option value="4">Last 4 digits (default)</option>
+              <option value="5">Last 5 digits</option>
+            </select>
+            <div className="mns-hint">How many digits to slice from the DN for the extension.</div>
+          </div>
         </div>
         <label className="mns-checkline">
           <input type="checkbox" checked={cfg.line2} onChange={e => setField('line2', e.target.checked)} />
@@ -363,19 +529,37 @@ export default function MetaToNs() {
         </label>
       </div>
 
+      {/* ── Step 2b: Extension editor ────────────────────── */}
+      {files.lines && files.lines.length > 0 && (
+        <div className="mns-section">
+          <div className="mns-step-label">
+            2b · Extension assignments — edit any extension inline, collisions highlighted in red
+          </div>
+          <ExtEditor
+            lines={files.lines}
+            extDigits={cfg.extDigits}
+            extOverrides={extOverrides}
+            onChange={setExtOverrides}
+          />
+        </div>
+      )}
+
       {/* ── Step 3: Build ────────────────────────────────── */}
       <div className="mns-section">
         <div className="mns-step-label">3 · Build</div>
         {error && <div className="mns-error">{error}</div>}
+        {hasCollisions && (
+          <div className="mns-error">Fix extension collisions in step 2b before building.</div>
+        )}
         <button
           type="button"
           className="btn btn-primary"
           disabled={!canBuild}
           onClick={handleBuild}
         >
-          Build import files
+          {result ? 'Rebuild import files' : 'Build import files'}
         </button>
-        {!canBuild && (
+        {!canBuild && !hasCollisions && (
           <div className="mns-hint" style={{ marginTop: 8 }}>
             {!files.lines && 'Upload the Lines CSV. '}
             {!files.devices && 'Upload the Managed Devices CSV. '}
@@ -399,7 +583,7 @@ export default function MetaToNs() {
               { n: result.spare.length, k: 'Spare DNs', ok: null },
             ].map(({ n, k, ok }) => (
               <div key={k} className="mns-stat">
-                <div className={`mns-stat-n${ok === false ? ' is-warn' : ok ? ' is-ok' : ''}`}>{n}</div>
+                <div className={`mns-stat-v${ok === false ? ' is-warn' : ok ? ' is-ok' : ''}`}>{n}</div>
                 <div className="mns-stat-k">{k}</div>
               </div>
             ))}
@@ -408,7 +592,7 @@ export default function MetaToNs() {
           {/* Downloads */}
           <div className="mns-downloads">
             {downloads.map((dl) => (
-              <div key={dl.name} className={`mns-dlrow${dl.blocked ? ' is-blocked' : ''}`}>
+              <div key={dl.name} className={`mns-dl-row${dl.blocked ? ' is-blocked' : ''}`}>
                 <div className="mns-dl-info">
                   <div className="mns-dl-name">{dl.name}</div>
                   {dl.note && <div className="mns-dl-note">{dl.note}</div>}

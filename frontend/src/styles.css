@@ -10724,3 +10724,146 @@ select {
   color: var(--ink-soft);
   line-height: 1.5;
 }
+
+/* ── MetaToNs extension editor + new classes ─────────────── */
+.mns-led {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--line);
+  border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent);
+  transition: background .2s;
+}
+
+.mns-led.is-on {
+  background: var(--ok);
+  border-color: transparent;
+  box-shadow: 0 0 0 2px rgba(5, 150, 105, .15);
+}
+
+.mns-detect-log {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.mns-detect-chip {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 20px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  border: 1px solid rgba(8, 145, 178, .15);
+}
+
+.mns-stat-v {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.1;
+}
+
+.mns-stat-v.is-ok { color: var(--ok); }
+.mns-stat-v.is-warn { color: var(--warn); }
+
+/* Extension editor */
+.mns-ext-editor {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mns-ext-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.mns-ext-warn { color: var(--err); font-weight: 600; }
+.mns-ext-ok { color: var(--ok); font-weight: 600; }
+
+.mns-ext-reset {
+  font-size: 11px;
+  padding: 3px 10px;
+  height: auto;
+  min-height: 0;
+}
+
+.mns-ext-table-wrap {
+  overflow-x: auto;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.mns-ext-table {
+  width: 100%;
+}
+
+.mns-td-mono {
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mns-row-collision {
+  background: rgba(220, 38, 38, .04);
+}
+
+.mns-ext-input {
+  width: 80px;
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg0);
+  color: var(--ink);
+  font-family: var(--mono, monospace);
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+  transition: border-color .15s;
+}
+
+.mns-ext-input:focus {
+  border-color: var(--accent);
+}
+
+.mns-ext-input.is-collision {
+  border-color: var(--err);
+  background: rgba(220, 38, 38, .06);
+  color: var(--err);
+}
+
+.mns-ext-input.is-overridden {
+  border-color: var(--accent);
+}
+
+.mns-collision-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--err);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
+/* dl-row blocked state */
+.mns-dl-row.is-blocked {
+  opacity: .7;
+}
+
+.mns-dl-row.is-blocked .mns-dl-name {
+  color: var(--warn);
+}
