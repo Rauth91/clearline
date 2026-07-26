@@ -15,17 +15,9 @@ import JobDayNarrative, { buildJobHealth } from './JobDayNarrative.jsx'
 
 const QUICK_ACTIONS = [
   {
-    id: 'jobs',
-    label: 'Jobs',
-    blurb: 'Active installs and migrations',
-    icon: '📋',
-    path: '/jobs',
-    cta: 'View all jobs',
-  },
-  {
     id: 'accounts',
     label: 'Accounts',
-    blurb: 'Customer system records',
+    blurb: 'Customer records, jobs, and call flows',
     icon: '🏢',
     path: '/accounts',
     cta: 'View accounts',
@@ -35,7 +27,7 @@ const QUICK_ACTIONS = [
     label: 'Tools',
     blurb: 'Diagnose, configure, and reference',
     icon: '🔧',
-    path: '/tools/symptom',
+    path: '/tools/calldiag',
     cta: 'Open tools',
   },
 ]

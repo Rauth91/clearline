@@ -77,8 +77,7 @@ const WORKSPACES = [
 ]
 
 const TOOLS = [
-  // Troubleshoot — Symptom Wizard leads, routes you to the right tool
-  { id: 'symptom',  label: 'Symptom Wizard',   group: 'troubleshoot' },
+  // Troubleshoot
   { id: 'calldiag', label: 'Call Diagnostic',   group: 'troubleshoot' },
   { id: 'pcap',     label: 'Packet Capture',    group: 'troubleshoot' },
   { id: 'netcheck', label: 'Network Check',     group: 'troubleshoot' },
@@ -244,6 +243,11 @@ export default function App() {
     }
   }, [repoReady, route.name, job?.jobType, jobId])
 
+  // Jobs section removed — redirect to accounts
+  useEffect(() => {
+    if (route.name === 'jobs') navigate('/accounts', { replace: true })
+  }, [route.name])
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     document.documentElement.style.colorScheme = theme
@@ -393,7 +397,6 @@ export default function App() {
     }
     if (route.name === 'account' && account) return <><span>Accounts</span><span className="topbar-crumb-sep">/</span><strong>{account.name}</strong></>
     if (route.name === 'accounts') return <strong>Accounts</strong>
-    if (route.name === 'jobs') return <strong>Jobs</strong>
     if (route.name === 'settings') return <strong>Settings</strong>
     if (route.name === 'tool') return <><span>Tools</span><span className="topbar-crumb-sep">/</span><strong>{TOOL_LABELS[route.params.toolId] || 'Tool'}</strong></>
     if (inTools) return <strong>Tools</strong>
@@ -423,14 +426,7 @@ export default function App() {
             </button>
             <button
               type="button"
-              className={`sidebar-item${route.name === 'jobs' || inJobSection ? ' is-active' : ''}`}
-              onClick={() => navigate('/jobs')}
-            >
-              Jobs
-            </button>
-            <button
-              type="button"
-              className={`sidebar-item${route.name === 'accounts' || route.name === 'account' ? ' is-active' : ''}`}
+              className={`sidebar-item${route.name === 'accounts' || route.name === 'account' || inJobSection ? ' is-active' : ''}`}
               onClick={() => navigate('/accounts')}
             >
               Accounts
@@ -553,15 +549,7 @@ export default function App() {
                   onOpenSearch={() => setPaletteOpen(true)}
                 />
               )}
-              {route.name === 'jobs' && (
-                <JobsHub
-                  refreshKey={hubTick}
-                  filter={route.query.filter}
-                  profileId={profile?.id}
-                  profile={profile}
-                  autoOpenNew={route.query.new === '1'}
-                />
-              )}
+              {route.name === 'jobs' && null /* redirected to /accounts */}
               {route.name === 'accounts' && (
                 <AccountsHub
                   refreshKey={hubTick}
@@ -596,7 +584,7 @@ export default function App() {
               {route.name === 'tool' && route.params.toolId === 'netcheck' && <NetworkCheck />}
               {route.name === 'tool' && route.params.toolId === 'router' && <RouterAdvisor />}
               {route.name === 'tool' && route.params.toolId === 'yealink' && <YealinkCodes />}
-              {route.name === 'tool' && route.params.toolId === 'symptom' && <SymptomWizard />}
+              {route.name === 'tool' && route.params.toolId === 'symptom' && null /* removed */}
               {route.name === 'tool' && route.params.toolId === 'ports' && <PortChecklist />}
               {route.name === 'tool' && route.params.toolId === 'algo' && <AlgoConfig />}
               {route.name === 'tool' && route.params.toolId === 'quickcard' && <QuickCard />}

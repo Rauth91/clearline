@@ -17,8 +17,8 @@ import { navigate } from '../lib/router.js'
 import { canApplyRemoteRefresh, onDataChanged } from '../lib/dataEvents.js'
 
 const TABS = [
-  { id: 'flow', label: 'Call flow' },
   { id: 'jobs', label: 'Jobs' },
+  { id: 'flow', label: 'Call flow' },
   { id: 'ns', label: 'NS Sync' },
   { id: 'requests', label: 'Requests' },
 ]
@@ -30,11 +30,11 @@ const STAGE_LABELS = {
 }
 
 export default function AccountDetail({ accountId, refreshKey, onBack }) {
-  const [tab, setTab] = useState('flow')
+  const [tab, setTab] = useState('jobs')
   const [account, setAccount] = useState(() => getAccount(accountId))
   const [jobs, setJobs] = useState(() => listJobsForAccount(accountId))
   const [showNewJob, setShowNewJob] = useState(false)
-  const [form, setForm] = useState({ customer: '', site: '', ticket: '' })
+  const [form, setForm] = useState({ customer: '', site: '', ticket: '', jobType: 'install' })
 
   useEffect(() => {
     setAccount(getAccount(accountId))
@@ -85,11 +85,7 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
   }
 
   function openNewJob() {
-    setForm({
-      customer: account.name || '',
-      site: account.site || '',
-      ticket: '',
-    })
+    setForm({ customer: account.name || '', site: account.site || '', ticket: '', jobType: 'install' })
     setShowNewJob(true)
   }
 
@@ -100,11 +96,13 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
       site: form.site.trim() || account.site || '',
       ticket: form.ticket.trim(),
       account_id: account.id,
+      jobType: form.jobType,
     })
     setShowNewJob(false)
     openJob(job.id)
     setJobs(listJobsForAccount(accountId))
-    navigate(`/job/${job.id}`)
+    const dest = form.jobType === 'migration' ? `/job/${job.id}/migration` : `/job/${job.id}`
+    navigate(dest)
   }
 
   return (
@@ -198,33 +196,31 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
       {tab === 'jobs' && (
         <div className="account-detail-jobs">
           {jobs.length === 0 ? (
-            <div className="empty-hint-action">
-              <p>No jobs linked to this account yet.</p>
-              <button type="button" className="btn btn-primary" onClick={openNewJob}>
-                New job
-              </button>
+            <div className="acct-jobs-empty">
+              <p>No jobs yet for this account.</p>
+              <button type="button" className="btn btn-primary" onClick={openNewJob}>+ New job</button>
             </div>
           ) : (
-            <div className="jobs-grid">
-              {jobs.map(job => (
-                <article key={job.id} className="job-card">
-                  <button
-                    type="button"
-                    className="job-card-main"
-                    onClick={() => {
-                      openJob(job.id)
-                      navigate(`/job/${job.id}`)
-                    }}
-                  >
-                    <div className="job-card-top">
-                      <div className="survey-kicker">Job</div>
-                      <span className="job-stage-badge">{STAGE_LABELS[job.stage] || 'Survey'}</span>
-                    </div>
-                    <h2>{job.customer || 'Untitled customer'}</h2>
-                    <p>{job.site || 'Site TBD'}</p>
+            <div className="acct-jobs-list">
+              <div className="acct-jobs-list-header">
+                <span className="acct-jobs-count">{jobs.length} job{jobs.length !== 1 ? 's' : ''}</span>
+                <button type="button" className="btn btn-primary" onClick={openNewJob}>+ New job</button>
+              </div>
+              {jobs.map(job => {
+                const isMig = job.jobType === 'migration'
+                const dest = isMig ? `/job/${job.id}/migration` : `/job/${job.id}`
+                return (
+                  <button key={job.id} type="button" className="acct-job-row"
+                    onClick={() => { openJob(job.id); navigate(dest) }}>
+                    <span className={`acct-job-type${isMig ? ' is-migration' : ''}`}>
+                      {isMig ? 'Migration' : 'Install'}
+                    </span>
+                    <span className="acct-job-name">{job.customer || 'Untitled'}{job.site ? ` · ${job.site}` : ''}</span>
+                    <span className="acct-job-date">{job.updatedAt ? new Date(job.updatedAt).toLocaleDateString() : ''}</span>
+                    <span className="acct-job-arrow">→</span>
                   </button>
-                </article>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
@@ -251,19 +247,26 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
             </div>
             <div className="section-modal-body">
               <form className="new-job-form" onSubmit={submitNewJob}>
-                <label className="field">
-                  <span>Customer / company</span>
-                  <input
-                    autoFocus
-                    value={form.customer}
-                    onChange={e => setForm(f => ({ ...f, customer: e.target.value }))}
-                  />
-                </label>
+                <div className="job-type-picker">
+                  {[
+                    { value: 'install', label: 'New Install', desc: 'Site survey → design → go-live' },
+                    { value: 'migration', label: 'Migration', desc: 'MCU → NetSapiens guided workflow' },
+                  ].map(t => (
+                    <button key={t.value} type="button"
+                      className={`job-type-card${form.jobType === t.value ? ' is-selected' : ''}`}
+                      onClick={() => setForm(f => ({ ...f, jobType: t.value }))}>
+                      <div className="job-type-card-label">{t.label}</div>
+                      <div className="job-type-card-desc">{t.desc}</div>
+                    </button>
+                  ))}
+                </div>
                 <label className="field">
                   <span>Site name</span>
                   <input
+                    autoFocus
                     value={form.site}
                     onChange={e => setForm(f => ({ ...f, site: e.target.value }))}
+                    placeholder={account.site || 'e.g. Main Office'}
                   />
                 </label>
                 <div className="btn-row">
