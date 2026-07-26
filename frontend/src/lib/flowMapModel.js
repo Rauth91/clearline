@@ -1,257 +1,281 @@
 /**
- * Call-flow map geometry + plain-language labels (shared by diagram + customer export).
+ * Call-flow graph builder + layout engine.
+ *
+ * Two-step design keeps data logic and geometry logic separate:
+ *   buildFlowGraph(design) → { nodes, edges, outline }   ← pure data, easy to unit-test
+ *   layoutGraph(graph, layout) → { nodes with x/y/w/h, edges with path, width, height }
+ *
+ * Adding a new node type: add it to buildFlowGraph, layoutGraph picks it up automatically.
+ * Changing the layout algorithm: edit layoutGraph only, data logic untouched.
  */
 
-export const PREVIEW_LAYOUT = { nodeW: 200, nodeH: 52, diamond: 54, layerGapY: 92, optionGap: 64 }
-export const EXPANDED_LAYOUT = { nodeW: 280, nodeH: 64, diamond: 66, layerGapY: 110, optionGap: 76 }
+// ─── Layout presets ───────────────────────────────────────────────────────────
+// mainW/mainH  — entry + AA nodes (larger, prominent)
+// leafW/leafH  — destination/option nodes (smaller, compact)
+// diamond      — side-length of the decision rhombus
+// vGap         — vertical gap between rows
+// hGap         — horizontal gap between option columns
+// padX/padY    — outer canvas padding
 
-export function buildFlowModel(design = {}, layout = PREVIEW_LAYOUT) {
-  const { nodeW, nodeH, diamond, layerGapY, optionGap } = layout
+export const PREVIEW_LAYOUT = {
+  mainW: 200, mainH: 52,
+  leafW: 150, leafH: 44,
+  diamond: 52,
+  vGap: 72, hGap: 14,
+  padX: 36, padY: 28,
+}
+
+export const EXPANDED_LAYOUT = {
+  mainW: 268, mainH: 64,
+  leafW: 178, leafH: 52,
+  diamond: 64,
+  vGap: 88, hGap: 18,
+  padX: 44, padY: 36,
+}
+
+// ─── Step 1: Build the data graph (no coordinates) ───────────────────────────
+// Returns { nodes[], edges[], outline[] }
+// node: { id, kind: 'main'|'branch'|'leaf', tone: 'open'|'night'|null, title, detail, sectionKey }
+// edge: { from, to, label, tone, style: 'curve'|'bus' }
+// outline: [{ id, title, detail }] — ordered for the steps panel
+
+export function buildFlowGraph(design = {}) {
   const mains = (design.mainNumbers || []).filter(n => String(n.number || n.label || '').trim())
   const mainTitle = mains[0]
     ? String(mains[0].number || mains[0].label)
-    : (String(design.numbering?.mainNumbers || '').split('\n')[0].trim() || 'Main number (not set)')
+    : 'Main number (not set)'
   const mainDetail = mains.length > 1
     ? mains.map(m => [m.number, m.label].filter(Boolean).join(' — ')).join(' · ')
-    : (mains[0]?.label && mains[0]?.number ? mains[0].label : '')
+    : (mains[0]?.label && mains[0]?.number ? mains[0].label : null)
 
-  const aaOn = (design.autoAttendant?.enabled || 'Yes') !== 'No'
+  const aa = design.autoAttendant || {}
+  // Only show AA box if explicitly enabled — don't assume on by default
+  const aaOn = aa.enabled === 'Yes'
+  const aaGreeting = String(aa.greeting || '').trim()
+  const dayPath = String(design.callFlow?.daytimePath || '').trim()
+
   const nightEnabled = (design.nightButton?.enabled || '') === 'Yes'
   const whoUses = String(design.nightButton?.whoUses || '').trim()
   const nightDest = String(design.nightButton?.destination || '').trim()
   const afterHoursPath = String(design.callFlow?.afterHoursPath || '').trim()
-  const hoursLabel = [
-    design.hours?.weekdayOpen,
-    design.hours?.weekdayClose,
-  ].filter(Boolean).join('–') || 'Hours not set'
 
-  const options = []
-  for (let i = 0; i <= 9; i += 1) {
-    const value = String(design.autoAttendant?.[`option${i}`] || '').trim()
-    if (value) options.push({ digit: String(i), label: `Press ${i}`, detail: value })
+  const hoursOpen = String(design.hours?.weekdayOpen || '').trim()
+  const hoursClose = String(design.hours?.weekdayClose || '').trim()
+  const hoursLabel = hoursOpen && hoursClose ? `${hoursOpen}–${hoursClose}` : ''
+
+  // Collect AA digits (0–9)
+  const aaDigits = []
+  for (let i = 0; i <= 9; i++) {
+    const v = String(aa[`option${i}`] || '').trim()
+    if (v) aaDigits.push({ digit: String(i), label: `Press ${i}`, detail: v })
   }
+  const aaTimeout = String(aa.timeoutAction || '').trim()
 
-  const dayPath = String(design.callFlow?.daytimePath || '').trim()
-  const aaGreeting = String(design.autoAttendant?.greeting || '').trim()
-
+  // Build after-hours display
   let afterTitle = 'After hours'
-  let afterDetail = afterHoursPath || nightDest || 'Not set'
+  let afterDetail = afterHoursPath || nightDest || 'Not configured'
   let afterEdge = 'After hours'
   if (nightEnabled || whoUses || nightDest) {
     afterTitle = 'Night button'
     afterDetail = [
-      whoUses ? `Phone: ${whoUses}` : 'Phone not set — add which phone has the night button',
+      whoUses ? `On: ${whoUses}` : null,
       nightDest || afterHoursPath || null,
-    ].filter(Boolean).join(' · ')
-    afterEdge = 'Night button'
-  } else if (afterHoursPath) {
-    afterTitle = 'After-hours path'
-    afterDetail = afterHoursPath
-    afterEdge = 'After hours'
+    ].filter(Boolean).join(' · ') || 'Not configured'
+    afterEdge = 'Night'
   }
 
   const nodes = []
   const edges = []
-  // Keep left branch fully on-canvas (old math put AA at negative x → clipped)
-  const padX = 48
-  const colGap = 64
-  const leftX = padX
-  const spineX = leftX + nodeW + colGap + diamond / 2
-  const rightX = spineX + diamond / 2 + colGap
-  const startY = 36
 
-  function pushNode(node) {
-    nodes.push({ ...node, edgeIn: node.edgeIn || '' })
-  }
+  // ── Core nodes ──
+  nodes.push({ id: 'main', kind: 'main', tone: 'open',
+    title: mainTitle, detail: mainDetail, sectionKey: 'numbers' })
 
-  function linkNodes(fromId, toId, label, tone) {
-    edges.push(link(fromId, toId, nodes, label, layout, tone))
-  }
+  nodes.push({ id: 'hours', kind: 'branch', tone: null,
+    title: 'Open?', detail: hoursLabel || null, sectionKey: 'hours' })
+  edges.push({ from: 'main', to: 'hours', label: null, tone: null, style: 'curve' })
 
-  pushNode({
-    id: 'main',
-    kind: 'main',
-    title: mainTitle,
-    detail: mainDetail,
-    x: spineX - nodeW / 2,
-    y: startY,
-    tone: 'open',
-  })
+  nodes.push({ id: 'aa', kind: aaOn ? 'main' : 'leaf', tone: 'open',
+    title: aaOn ? 'Auto attendant' : (dayPath || 'Daytime path'),
+    detail: aaOn ? (aaGreeting || dayPath || null) : null,
+    sectionKey: 'aa' })
+  edges.push({ from: 'hours', to: 'aa', label: 'Open', tone: 'open', style: 'curve' })
 
-  pushNode({
-    id: 'hours',
-    kind: 'branch',
-    title: 'Open hours?',
-    detail: hoursLabel,
-    x: spineX - diamond / 2,
-    y: startY + layerGapY,
-    edgeIn: hoursLabel,
-  })
-  linkNodes('main', 'hours', hoursLabel)
+  nodes.push({ id: 'night', kind: 'leaf', tone: 'night',
+    title: afterTitle, detail: afterDetail, sectionKey: 'night' })
+  edges.push({ from: 'hours', to: 'night', label: afterEdge, tone: 'night', style: 'curve' })
 
-  const dayId = aaOn ? 'aa' : 'day'
-  pushNode({
-    id: dayId,
-    kind: aaOn ? 'main' : 'leaf',
-    title: aaOn ? 'Auto attendant' : (dayPath || 'Day path'),
-    detail: aaOn ? (aaGreeting || dayPath || 'Day menu') : dayPath,
-    x: leftX,
-    y: startY + layerGapY * 2,
-    edgeIn: 'Open',
-    tone: 'open',
-  })
-  linkNodes('hours', dayId, 'Open', 'open')
-
-  pushNode({
-    id: 'night',
-    kind: 'leaf',
-    title: afterTitle,
-    detail: afterDetail,
-    x: rightX,
-    y: startY + layerGapY * 2,
-    edgeIn: afterEdge,
-    tone: 'night',
-  })
-  linkNodes('hours', 'night', afterEdge, 'night')
-
-  let optionLayerY = startY + layerGapY * 3
-  const optionX = leftX
-
-  if (aaOn && options.length) {
-    options.forEach((opt, idx) => {
-      const id = `opt-${opt.digit}`
-      pushNode({
-        id,
-        kind: 'leaf',
-        title: opt.label,
-        detail: opt.detail,
-        x: optionX,
-        y: optionLayerY + idx * optionGap,
-        edgeIn: `Press ${opt.digit}`,
-        tone: 'open',
+  // ── AA option leaf nodes — spread horizontally ──
+  if (aaOn) {
+    if (aaDigits.length > 0) {
+      aaDigits.forEach(opt => {
+        nodes.push({ id: `opt-${opt.digit}`, kind: 'leaf', tone: 'open',
+          title: opt.label, detail: opt.detail, sectionKey: 'aa' })
+        edges.push({ from: 'aa', to: `opt-${opt.digit}`, label: opt.digit, tone: 'open', style: 'bus' })
       })
-      linkNodes(dayId, id, opt.digit, 'open')
-    })
-    optionLayerY += options.length * optionGap
-  } else if (aaOn) {
-    const timeout = String(design.autoAttendant?.timeoutAction || '').trim() || 'Menu options not set'
-    pushNode({
-      id: 'aa-empty',
-      kind: 'leaf',
-      title: 'Menu / timeout',
-      detail: timeout,
-      x: optionX,
-      y: optionLayerY,
-      edgeIn: 'Menu',
-      tone: 'open',
-    })
-    linkNodes(dayId, 'aa-empty', 'Menu', 'open')
-    optionLayerY += optionGap
+      if (aaTimeout) {
+        nodes.push({ id: 'aa-timeout', kind: 'leaf', tone: 'open',
+          title: 'Timeout', detail: aaTimeout, sectionKey: 'aa' })
+        edges.push({ from: 'aa', to: 'aa-timeout', label: '⏱', tone: 'open', style: 'bus' })
+      }
+    } else {
+      // AA enabled but no options filled in yet
+      nodes.push({ id: 'aa-empty', kind: 'leaf', tone: 'open',
+        title: 'Menu / timeout', detail: aaTimeout || '(options not set)', sectionKey: 'aa' })
+      edges.push({ from: 'aa', to: 'aa-empty', label: null, tone: 'open', style: 'bus' })
+    }
   }
 
-  if (nightDest && (nightEnabled || whoUses) && afterHoursPath && nightDest !== afterHoursPath) {
-    pushNode({
-      id: 'night-dest',
-      kind: 'leaf',
-      title: 'Night destination',
-      detail: nightDest,
-      x: rightX,
-      y: Math.max(optionLayerY, startY + layerGapY * 3),
-      edgeIn: 'Night button',
-      tone: 'night',
-    })
-    linkNodes('night', 'night-dest', 'Routes to', 'night')
-    optionLayerY = Math.max(optionLayerY, startY + layerGapY * 3 + optionGap)
+  // ── Night children — stack vertically at night column ──
+  if (nightDest && afterHoursPath && nightDest !== afterHoursPath && (nightEnabled || whoUses)) {
+    nodes.push({ id: 'night-dest', kind: 'leaf', tone: 'night',
+      title: 'Night destination', detail: nightDest, sectionKey: 'night' })
+    edges.push({ from: 'night', to: 'night-dest', label: '→', tone: 'night', style: 'curve' })
   }
 
-  if (design.voicemail?.needed !== 'No' && design.voicemail?.generalMailbox) {
-    const vmY = Math.max(optionLayerY, startY + layerGapY * 3)
-    pushNode({
-      id: 'vm',
-      kind: 'leaf',
-      title: 'Voicemail',
-      detail: design.voicemail.generalMailbox,
-      x: rightX,
-      y: vmY + (nightDest && afterHoursPath ? optionGap : 0),
-      edgeIn: 'Voicemail',
-      tone: 'night',
-    })
-    linkNodes('night', 'vm', 'VM', 'night')
-    optionLayerY = Math.max(optionLayerY, vmY + optionGap * 2)
+  if (design.voicemail?.generalMailbox) {
+    nodes.push({ id: 'vm', kind: 'leaf', tone: 'night',
+      title: 'Voicemail', detail: design.voicemail.generalMailbox, sectionKey: 'voicemail' })
+    edges.push({ from: 'night', to: 'vm', label: 'VM', tone: 'night', style: 'curve' })
   }
 
-  const extraNotes = [
-    { id: 'note-queues', title: 'Queues', detail: design.callFlow?.queues },
-    { id: 'note-rings', title: 'Ring groups', detail: design.callFlow?.ringGroups },
-    { id: 'note-fail', title: 'Failover', detail: design.callFlow?.failover },
-  ].filter(n => String(n.detail || '').trim())
+  // ── Extra routing notes ──
+  const extras = [
+    { id: 'note-rings', title: 'Ring groups', val: design.callFlow?.ringGroups },
+    { id: 'note-queues', title: 'Queues', val: design.callFlow?.queues },
+    { id: 'note-fail', title: 'Failover', val: design.callFlow?.failover },
+  ].filter(n => String(n.val || '').trim())
 
-  extraNotes.forEach((note) => {
-    pushNode({
-      id: note.id,
-      kind: 'leaf',
-      title: note.title,
-      detail: String(note.detail).trim(),
-      x: optionX,
-      y: optionLayerY,
-      edgeIn: 'Routing note',
-      tone: 'open',
-    })
-    linkNodes(dayId, note.id, 'note', 'open')
-    optionLayerY += optionGap
+  extras.forEach(n => {
+    nodes.push({ id: n.id, kind: 'leaf', tone: 'open',
+      title: n.title, detail: String(n.val).trim(), sectionKey: 'daytime' })
+    edges.push({ from: 'aa', to: n.id, label: null, tone: 'open', style: 'bus' })
   })
 
-  const outline = nodes.map(n => ({
-    id: n.id,
-    title: n.title,
-    detail: n.detail || '',
-  }))
+  const outline = nodes.map(n => ({ id: n.id, title: n.title, detail: n.detail || '' }))
 
-  const maxX = Math.max(...nodes.map(n => n.x + (n.kind === 'branch' ? diamond : nodeW)), rightX + nodeW) + padX
-  const maxY = Math.max(...nodes.map(n => n.y + (n.kind === 'branch' ? diamond : nodeH)), 280) + 56
+  return { nodes, edges, outline }
+}
 
-  return {
-    nodes,
-    edges,
-    outline,
-    width: Math.max(820, maxX),
-    height: maxY,
+// ─── Step 2: Assign coordinates and compute edge paths ───────────────────────
+// All position math lives here. To change the layout, only edit this function.
+
+export function layoutGraph(graph, layout) {
+  const { mainW, mainH, leafW, leafH, diamond, vGap, hGap, padX, padY } = layout
+  const { nodes, edges, outline } = graph
+
+  // Mutable node map for position assignment
+  const nm = {}
+  nodes.forEach(n => { nm[n.id] = { ...n } })
+
+  // Identify children by parent
+  const aaChildIds  = edges.filter(e => e.from === 'aa').map(e => e.to)
+  const nightChildIds = edges.filter(e => e.from === 'night').map(e => e.to)
+
+  // ── Horizontal position math ──
+  // Options spread horizontally from padX
+  const optCount  = aaChildIds.length
+  const optStride = leafW + hGap
+  const optBlockW = optCount > 0 ? optCount * optStride - hGap : mainW
+
+  // AA node centered above its option children
+  const aaCX = padX + optBlockW / 2
+  const aaX  = aaCX - mainW / 2
+
+  // Night column sits to the right of options with a wider gap
+  const nightGap = hGap * 5
+  const nightX   = padX + optBlockW + nightGap
+  const nightCX  = nightX + leafW / 2
+
+  // Spine (DID + Hours diamond) centered between AA and Night
+  const spineCX = (aaCX + nightCX) / 2
+
+  // ── Vertical row Y positions ──
+  const y0 = padY                        // DID entry
+  const y1 = y0 + mainH + vGap          // Hours decision
+  const y2 = y1 + diamond + vGap        // AA + Night
+  const y3 = y2 + mainH + vGap          // Options row
+
+  // ── Assign positions ──
+  if (nm.main)  Object.assign(nm.main,  { x: spineCX - mainW / 2,    y: y0, w: mainW,   h: mainH })
+  if (nm.hours) Object.assign(nm.hours, { x: spineCX - diamond / 2,  y: y1, w: diamond, h: diamond })
+  if (nm.aa) {
+    const h = nm.aa.kind === 'main' ? mainH : leafH
+    Object.assign(nm.aa, { x: aaX, y: y2, w: mainW, h })
   }
+  if (nm.night) Object.assign(nm.night, { x: nightX, y: y2, w: leafW, h: leafH })
+
+  // Options spread horizontally in y3 row
+  aaChildIds.forEach((id, i) => {
+    if (!nm[id]) return
+    Object.assign(nm[id], { x: padX + i * optStride, y: y3, w: leafW, h: leafH })
+  })
+
+  // Night children stack vertically in the night column
+  nightChildIds.forEach((id, i) => {
+    if (!nm[id]) return
+    const yPos = y2 + leafH + hGap * 3 + i * (leafH + hGap * 2)
+    Object.assign(nm[id], { x: nightX, y: yPos, w: leafW, h: leafH })
+  })
+
+  // ── Compute edge paths ──
+  function bottomCenter(id) {
+    const n = nm[id]
+    return n ? { x: n.x + n.w / 2, y: n.y + n.h } : { x: 0, y: 0 }
+  }
+  function topCenter(id) {
+    const n = nm[id]
+    return n ? { x: n.x + n.w / 2, y: n.y } : { x: 0, y: 0 }
+  }
+  function sCurve(sx, sy, tx, ty) {
+    const my = (sy + ty) / 2
+    return `M ${sx} ${sy} C ${sx} ${my}, ${tx} ${my}, ${tx} ${ty}`
+  }
+  function busCurve(sx, sy, tx, ty) {
+    // Right-angle routing: down from source → horizontal bus → up to target
+    // Creates a clean schematic look with no crossing lines
+    const busY = sy + (ty - sy) * 0.38
+    return `M ${sx} ${sy} L ${sx} ${busY} L ${tx} ${busY} L ${tx} ${ty}`
+  }
+
+  const layoutEdges = edges.map(edge => {
+    const src = nm[edge.from]
+    const tgt = nm[edge.to]
+    if (!src || !tgt) return { ...edge, path: '', labelX: 0, labelY: 0 }
+
+    const sp = bottomCenter(edge.from)
+    const tp = topCenter(edge.to)
+
+    const path = edge.style === 'bus'
+      ? busCurve(sp.x, sp.y, tp.x, tp.y)
+      : sCurve(sp.x, sp.y, tp.x, tp.y)
+
+    return {
+      ...edge,
+      path,
+      labelX: (sp.x + tp.x) / 2,
+      labelY: (sp.y + tp.y) / 2 - 4,
+    }
+  })
+
+  // ── Canvas size ──
+  const xs = Object.values(nm).flatMap(n => n.x != null ? [n.x, n.x + (n.w || 0)] : [])
+  const ys = Object.values(nm).flatMap(n => n.y != null ? [n.y, n.y + (n.h || 0)] : [])
+  const width  = Math.max(820, (xs.length ? Math.max(...xs) : 0) + padX)
+  const height = Math.max(300, (ys.length ? Math.max(...ys) : 0) + padY * 2)
+
+  return { nodes: Object.values(nm), edges: layoutEdges, outline, width, height }
+}
+
+// ─── Convenience wrapper (keeps backward compatibility) ───────────────────────
+export function buildFlowModel(design = {}, layout = PREVIEW_LAYOUT) {
+  return layoutGraph(buildFlowGraph(design), layout)
 }
 
 export function plainStepsFromDesign(design = {}) {
-  const model = buildFlowModel(design, PREVIEW_LAYOUT)
-  return model.outline.map((s, i) => ({
+  return buildFlowGraph(design).outline.map((s, i) => ({
     n: i + 1,
     title: s.title,
     detail: s.detail || '',
   }))
-}
-
-function nodeCenter(node, layout) {
-  if (node.kind === 'branch') {
-    return { x: node.x + layout.diamond / 2, y: node.y + layout.diamond / 2 }
-  }
-  return { x: node.x + layout.nodeW / 2, y: node.y + layout.nodeH / 2 }
-}
-
-function link(fromId, toId, nodes, label, layout, tone) {
-  const from = nodes.find(n => n.id === fromId)
-  const to = nodes.find(n => n.id === toId)
-  if (!from || !to) {
-    return { path: '', label, labelX: 0, labelY: 0, tone }
-  }
-  const a = nodeCenter(from, layout)
-  const b = nodeCenter(to, layout)
-  const midY = (a.y + b.y) / 2
-  const fromBottom = from.kind === 'branch' ? layout.diamond / 2 - 4 : layout.nodeH / 2 - 4
-  const toTop = to.kind === 'branch' ? layout.diamond / 2 : layout.nodeH / 2
-  const path = `M ${a.x} ${a.y + fromBottom} C ${a.x} ${midY}, ${b.x} ${midY}, ${b.x} ${b.y - toTop}`
-  return {
-    path,
-    label,
-    labelX: (a.x + b.x) / 2,
-    labelY: midY - 4,
-    tone,
-  }
 }

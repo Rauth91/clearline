@@ -386,7 +386,7 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
             </label>
           </div>
 
-          <div className="panel-head" style={{ marginTop: 20 }}>
+          <div id="cf-section-numbers" className="panel-head" style={{ marginTop: 20 }}>
             <div className="survey-kicker">Entry</div>
             <h2>Numbers for this route</h2>
           </div>
@@ -421,7 +421,7 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
             Add number
           </button>
 
-          <div className="panel-head" style={{ marginTop: 20 }}>
+          <div id="cf-section-hours" className="panel-head" style={{ marginTop: 20 }}>
             <div className="survey-kicker">Schedule</div>
             <h2>Hours</h2>
           </div>
@@ -460,7 +460,7 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
             </label>
           </div>
 
-          <div className="panel-head" style={{ marginTop: 20 }}>
+          <div id="cf-section-aa" className="panel-head" style={{ marginTop: 20 }}>
             <div className="survey-kicker">Menu</div>
             <h2>Auto attendant</h2>
           </div>
@@ -503,7 +503,7 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
             </label>
           </div>
 
-          <div className="panel-head" style={{ marginTop: 20 }}>
+          <div id="cf-section-night" className="panel-head" style={{ marginTop: 20 }}>
             <div className="survey-kicker">Closed</div>
             <h2>Night / after hours</h2>
           </div>
@@ -545,7 +545,7 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
             </label>
           </div>
 
-          <div className="panel-head" style={{ marginTop: 20 }}>
+          <div id="cf-section-daytime" className="panel-head" style={{ marginTop: 20 }}>
             <div className="survey-kicker">Routing notes</div>
             <h2>Day path, queues, failover</h2>
           </div>
@@ -582,7 +582,7 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
                 onChange={e => patchFlow('callFlow', 'failover', e.target.value)}
               />
             </label>
-            <label className="field">
+            <label id="cf-section-voicemail" className="field">
               <span>Voicemail needed</span>
               <select
                 value={flow.voicemail.needed}
@@ -619,7 +619,16 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
         </div>
 
         <div className="account-flow-chart">
-          <CallFlowDiagram design={diagramDesign} />
+          <CallFlowDiagram
+            design={diagramDesign}
+            onGoToSection={(key) => {
+              const el = document.getElementById(`cf-section-${key}`)
+              if (!el) return
+              el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              el.classList.add('cf-section-pulse')
+              setTimeout(() => el.classList.remove('cf-section-pulse'), 1100)
+            }}
+          />
           <details className="account-summary-preview">
             <summary>
               {FEATURES.haloIntegration

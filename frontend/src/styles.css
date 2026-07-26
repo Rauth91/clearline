@@ -1987,6 +1987,23 @@ a.btn {
   color: var(--muted) !important;
 }
 
+.call-flow-edit-btn {
+  margin-top: 10px;
+  font-size: 0.8rem;
+}
+
+/* Pulse animation when jumping to a form section from the diagram */
+@keyframes cf-section-flash {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); }
+  40%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 25%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.cf-section-pulse {
+  animation: cf-section-flash 1.1s ease-out;
+  border-radius: var(--radius);
+  scroll-margin-top: 16px;
+}
+
 .call-flow-canvas {
   padding: 8px;
   color: var(--ink-soft);

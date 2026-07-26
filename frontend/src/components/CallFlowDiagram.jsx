@@ -13,18 +13,25 @@ import {
 const PREVIEW = PREVIEW_LAYOUT
 const EXPANDED = EXPANDED_LAYOUT
 
-export default function CallFlowDiagram({ design, compact = false }) {
+export default function CallFlowDiagram({ design, compact = false, onGoToSection }) {
   const [expanded, setExpanded] = useState(false)
 
   if (compact) {
-    return <FlowExplorer design={design} mode="compact" />
+    return <FlowExplorer design={design} mode="compact" onGoToSection={onGoToSection} />
   }
 
   return (
     <>
       <FlowPreview design={design} onOpen={() => setExpanded(true)} />
       {expanded && createPortal(
-        <FlowOverlay design={design} onClose={() => setExpanded(false)} />,
+        <FlowOverlay
+          design={design}
+          onClose={() => setExpanded(false)}
+          onGoToSection={(key) => {
+            setExpanded(false)
+            onGoToSection?.(key)
+          }}
+        />,
         document.body,
       )}
     </>
@@ -52,7 +59,7 @@ function FlowPreview({ design, onOpen }) {
           role="img"
           aria-hidden="true"
         >
-          <StaticMapSvg model={model} layout={PREVIEW} selectedId={null} truncateMax={22} />
+          <StaticMapSvg model={model} selectedId={null} truncateMax={22} />
         </svg>
         <span className="call-flow-preview-cta">Click to open full map</span>
       </button>
@@ -60,7 +67,7 @@ function FlowPreview({ design, onOpen }) {
   )
 }
 
-function FlowOverlay({ design, onClose }) {
+function FlowOverlay({ design, onClose, onGoToSection }) {
   return (
     <div
       className="section-modal-backdrop call-flow-overlay-backdrop"
@@ -76,13 +83,13 @@ function FlowOverlay({ design, onClose }) {
         aria-labelledby="call-flow-overlay-title"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <FlowExplorer design={design} mode="expanded" onClose={onClose} />
+        <FlowExplorer design={design} mode="expanded" onClose={onClose} onGoToSection={onGoToSection} />
       </div>
     </div>
   )
 }
 
-function FlowExplorer({ design, mode = 'expanded', onClose }) {
+function FlowExplorer({ design, mode = 'expanded', onClose, onGoToSection }) {
   const layout = mode === 'expanded' ? EXPANDED : PREVIEW
   const model = useMemo(() => buildFlowModel(design, layout), [design, layout])
   const [selectedId, setSelectedId] = useState(null)
@@ -136,13 +143,13 @@ function FlowExplorer({ design, mode = 'expanded', onClose }) {
     const node = model.nodes.find(n => n.id === id)
     const el = viewportRef.current
     if (!node || !el) return
-    const nx = node.x + (node.kind === 'branch' ? layout.diamond / 2 : layout.nodeW / 2)
-    const ny = node.y + (node.kind === 'branch' ? layout.diamond / 2 : layout.nodeH / 2)
+    const nx = node.x + (node.w ?? 0) / 2
+    const ny = node.y + (node.h ?? 0) / 2
     setPan({
       x: el.clientWidth / 2 - nx * z,
       y: el.clientHeight / 2 - ny * z,
     })
-  }, [model.nodes, layout])
+  }, [model.nodes])
 
   function selectNode(id, { follow = false } = {}) {
     setSelectedId(id)
@@ -332,7 +339,6 @@ function FlowExplorer({ design, mode = 'expanded', onClose }) {
             >
               <StaticMapSvg
                 model={model}
-                layout={layout}
                 selectedId={selectedId}
                 followId={following ? model.outline[followIndex]?.id : null}
                 truncateMax={truncateMax}
@@ -350,16 +356,27 @@ function FlowExplorer({ design, mode = 'expanded', onClose }) {
               <>
                 <div className="call-flow-detail-kicker">{kindLabel(selected.kind, selected.tone)}</div>
                 <h3>{selected.title}</h3>
-                {selected.detail ? <p>{selected.detail}</p> : <p className="muted">No extra detail on this step.</p>}
+                {selected.detail
+                  ? <p>{selected.detail}</p>
+                  : <p className="muted">No extra detail on this step.</p>}
                 {selected.edgeIn && (
                   <p className="call-flow-detail-edge">Reached via: <strong>{selected.edgeIn}</strong></p>
+                )}
+                {onGoToSection && selected.sectionKey && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary call-flow-edit-btn"
+                    onClick={() => onGoToSection(selected.sectionKey)}
+                  >
+                    Edit in form →
+                  </button>
                 )}
               </>
             ) : (
               <>
                 <div className="call-flow-detail-kicker">Follow the flow</div>
                 <h3>Pick a step or press Start follow</h3>
-                <p className="muted">Next walks each hop so you can read the full destination text.</p>
+                <p className="muted">Next walks each hop so you can read the full destination. Click any node to see details and jump directly to its form field.</p>
               </>
             )}
           </div>
@@ -369,8 +386,9 @@ function FlowExplorer({ design, mode = 'expanded', onClose }) {
   )
 }
 
-function StaticMapSvg({ model, layout, selectedId, followId = null, truncateMax = 28, onSelect }) {
-  const { nodeW, nodeH, diamond } = layout
+// StaticMapSvg — shared between preview and expanded modes.
+// Uses node.w / node.h (assigned by layoutGraph) — no layout object needed for sizing.
+function StaticMapSvg({ model, selectedId, followId = null, truncateMax = 28, onSelect }) {
   return (
     <>
       <defs>
@@ -382,6 +400,8 @@ function StaticMapSvg({ model, layout, selectedId, followId = null, truncateMax 
         </marker>
       </defs>
       <rect width={model.width} height={model.height} fill="url(#cf-grid)" />
+
+      {/* Edges render behind nodes */}
       {model.edges.map((edge, i) => (
         <g key={`e-${i}`} className={`cf-edge${edge.tone === 'night' ? ' cf-edge-night' : ''}`}>
           <path
@@ -397,9 +417,20 @@ function StaticMapSvg({ model, layout, selectedId, followId = null, truncateMax 
           )}
         </g>
       ))}
+
+      {/* Nodes */}
       {model.nodes.map((node) => {
+        if (node.x == null || node.y == null) return null
         const active = selectedId === node.id
         const follow = followId === node.id
+        const w = node.w ?? 200
+        const h = node.h ?? 52
+        const isDiamond = node.kind === 'branch'
+
+        // Text vertical positions relative to node height
+        const titleY = node.detail ? Math.round(h * 0.42) : Math.round(h * 0.62)
+        const detailY = Math.round(h * 0.76)
+
         return (
           <g
             key={node.id}
@@ -407,41 +438,38 @@ function StaticMapSvg({ model, layout, selectedId, followId = null, truncateMax 
             transform={`translate(${node.x}, ${node.y})`}
           >
             <title>{[node.title, node.detail].filter(Boolean).join(' — ')}</title>
-            {node.kind === 'branch' ? (
+
+            {isDiamond ? (
               <polygon
-                points={`${diamond / 2},0 ${diamond},${diamond / 2} ${diamond / 2},${diamond} 0,${diamond / 2}`}
+                points={`${w / 2},0 ${w},${h / 2} ${w / 2},${h} 0,${h / 2}`}
                 className="cf-shape"
               />
             ) : (
-              <rect width={nodeW} height={nodeH} rx="12" className="cf-shape" />
+              <rect width={w} height={h} rx="10" className="cf-shape" />
             )}
+
+            {/* Invisible hit area slightly larger than the shape */}
             {onSelect && (
               <rect
-                className="cf-node-hit"
-                x={node.kind === 'branch' ? -4 : -2}
-                y={node.kind === 'branch' ? -4 : -2}
-                width={(node.kind === 'branch' ? diamond : nodeW) + 8}
-                height={(node.kind === 'branch' ? diamond : nodeH) + 8}
+                x={-3} y={-3} width={w + 6} height={h + 6}
                 fill="transparent"
                 style={{ cursor: 'pointer' }}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onSelect(node.id)
-                }}
+                onClick={(e) => { e.stopPropagation(); onSelect(node.id) }}
               />
             )}
-            {node.kind === 'branch' ? (
-              <text x={diamond / 2} y={diamond / 2 + 4} textAnchor="middle" className="cf-label">
-                {truncate(node.title, 12)}
+
+            {isDiamond ? (
+              <text x={w / 2} y={h / 2 + 4} textAnchor="middle" className="cf-label">
+                {truncate(node.title, 10)}
               </text>
             ) : (
               <>
-                <text x={16} y={node.detail ? 24 : 38} className="cf-label cf-label-left">
+                <text x={14} y={titleY} className="cf-label cf-label-left">
                   {truncate(node.title, truncateMax)}
                 </text>
                 {node.detail && (
-                  <text x={16} y={46} className="cf-sublabel">
-                    {truncate(node.detail, truncateMax + 4)}
+                  <text x={14} y={detailY} className="cf-sublabel">
+                    {truncate(node.detail, truncateMax + 6)}
                   </text>
                 )}
               </>
