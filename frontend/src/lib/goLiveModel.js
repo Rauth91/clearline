@@ -399,14 +399,13 @@ export function exportHandoffDoc(golive, job, provision, supportEmail) {
       .replace(/\W+/g, '_').replace(/^_|_$/g, '').toLowerCase() || 'go-live'
     return `${name}-handoff-${new Date().toISOString().slice(0, 10)}.html`
   })()
-  const win = window.open('', '_blank')
-  if (win) {
-    win.document.open()
-    win.document.write(html)
-    win.document.close()
-  } else {
-    downloadBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), filename)
-  }
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 10000)
 }
 
 export function exportGoLiveHtml(golive, meta, provision) {
@@ -486,4 +485,419 @@ export async function downloadGoLivePdf(golive, meta, provision) {
   } finally {
     iframe.remove()
   }
+}
+
+/**
+ * Post-install customer handoff PDF — jsPDF native (no html2canvas).
+ * Sections: numbers · extensions · AA · voicemail · hours · E911 · support · sign-off
+ *
+ * @param {object} golive
+ * @param {object} job         — { customer, site, supportEmail, ... }
+ * @param {object} provision   — { mainNumbers, users, aaOptions, hours }
+ * @param {object} survey      — full survey object (for e911Locations, techName)
+ */
+export async function exportHandoffPdf(golive, job = {}, provision = {}, survey = {}) {
+  const { jsPDF } = await import('jspdf')
+
+  const doc = new jsPDF({ unit: 'pt', format: 'letter', orientation: 'portrait' })
+  const W = doc.internal.pageSize.getWidth()
+  const H = doc.internal.pageSize.getHeight()
+  const ML = 48
+  const MR = W - 48
+  const BODY = MR - ML
+
+  // Palette
+  const TEAL    = [8, 145, 178]
+  const TEAL_BG = [236, 254, 255]
+  const TEAL_LT = [186, 230, 253]
+  const INK     = [15, 15, 25]
+  const MUTED   = [100, 110, 125]
+  const LINE    = [220, 222, 228]
+  const WHITE   = [255, 255, 255]
+  const OK_BG   = [236, 253, 245]
+  const OK      = [5, 150, 105]
+
+  const data      = mergeGoLive(golive)
+  const handoff   = data.handoff || {}
+  const customer  = String(job.customer || job.name || 'Customer')
+  const site      = String(job.site || '')
+  const techName  = String(survey.techName || data.handoff?.signOffName || '')
+  const today     = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+  const slug      = customer.replace(/\W+/g, '_').replace(/^_|_$/g, '').toLowerCase() || 'customer'
+
+  const mainNumbers = (provision.mainNumbers || []).filter(n => String(n.number || n.label || '').trim())
+  const users       = (provision.users || []).filter(u => String(u.name || u.extension || '').trim())
+  const aaOptions   = (provision.aaOptions || [])
+  const e911Locs    = (survey.e911Locations || []).filter(l => String(l.name || l.address || '').trim())
+  const hours       = provision.hours || {}
+
+  let y = 0
+  let pageNum = 1
+
+  function pageFooter() {
+    doc.setFontSize(8)
+    doc.setTextColor(...MUTED)
+    doc.setFont('helvetica', 'normal')
+    doc.text(`${customer} · Phone system handoff · ${today}`, ML, H - 24)
+    doc.text(`Page ${pageNum}`, MR, H - 24, { align: 'right' })
+    doc.setTextColor(...INK)
+  }
+
+  function newPage() {
+    pageFooter()
+    doc.addPage()
+    pageNum++
+    y = 52
+  }
+
+  function checkY(need = 40) {
+    if (y + need > H - 52) newPage()
+  }
+
+  function sectionHeader(title) {
+    checkY(36)
+    y += 10
+    doc.setFillColor(...LINE)
+    doc.rect(ML, y, BODY, 0.5, 'F')
+    y += 8
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...TEAL)
+    doc.text(title.toUpperCase(), ML, y)
+    y += 14
+    doc.setTextColor(...INK)
+  }
+
+  function labelValue(label, value, indent = 0) {
+    if (!String(value || '').trim()) return
+    checkY(16)
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...MUTED)
+    doc.text(label, ML + indent, y)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(...INK)
+    doc.setFontSize(10)
+    const wrapped = doc.splitTextToSize(String(value), BODY - 110)
+    doc.text(wrapped, ML + 110 + indent, y)
+    y += Math.max(14, wrapped.length * 13)
+  }
+
+  // ── Cover header ─────────────────────────────────────────────────────────
+  doc.setFillColor(...TEAL)
+  doc.rect(0, 0, W, 90, 'F')
+
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(...WHITE)
+  doc.text('PHONE SYSTEM HANDOFF', ML, 34)
+
+  doc.setFontSize(24)
+  doc.setFont('helvetica', 'bold')
+  doc.text(customer, ML, 58)
+
+  doc.setFontSize(11)
+  doc.setFont('helvetica', 'normal')
+  doc.setTextColor(186, 230, 253)
+  const headerRight = [site, today].filter(Boolean).join('  ·  ')
+  doc.text(headerRight, ML, 76)
+
+  y = 110
+
+  // Install summary bar
+  doc.setFillColor(...TEAL_BG)
+  doc.roundedRect(ML, y, BODY, 36, 4, 4, 'F')
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(...TEAL)
+
+  const summaryParts = []
+  if (mainNumbers.length) summaryParts.push(`${mainNumbers.length} number${mainNumbers.length > 1 ? 's' : ''} configured`)
+  if (users.length) summaryParts.push(`${users.length} extension${users.length > 1 ? 's' : ''}`)
+  if (aaOptions.length) summaryParts.push('Auto attendant active')
+  if (data.e911Test?.testedAt) summaryParts.push('E911 verified')
+
+  doc.text(summaryParts.join('   ·   ') || 'Installation complete', ML + 12, y + 15)
+  doc.setFontSize(8)
+  doc.setFont('helvetica', 'normal')
+  doc.setTextColor(...MUTED)
+  if (techName) doc.text(`Installed by: ${techName}`, ML + 12, y + 27)
+  y += 50
+
+  // ── Main phone numbers ────────────────────────────────────────────────────
+  sectionHeader('Main phone numbers')
+  if (mainNumbers.length === 0) {
+    doc.setFontSize(10)
+    doc.setTextColor(...MUTED)
+    doc.text('No numbers documented.', ML, y)
+    doc.setTextColor(...INK)
+    y += 16
+  } else {
+    // Header row
+    doc.setFillColor(...LINE)
+    doc.rect(ML, y - 2, BODY, 18, 'F')
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...MUTED)
+    doc.text('LABEL', ML + 4, y + 10)
+    doc.text('NUMBER', ML + 140, y + 10)
+    doc.text('NOTES', ML + 260, y + 10)
+    y += 20
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(...INK)
+    mainNumbers.forEach((n, i) => {
+      checkY(16)
+      if (i % 2 === 0) {
+        doc.setFillColor(249, 250, 251)
+        doc.rect(ML, y - 2, BODY, 16, 'F')
+      }
+      doc.setFontSize(10)
+      doc.text(String(n.label || '—').slice(0, 22), ML + 4, y + 9)
+      doc.setFont('helvetica', 'bold')
+      doc.text(String(n.number || '—'), ML + 140, y + 9)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(9)
+      doc.setTextColor(...MUTED)
+      doc.text(String(n.notes || '').slice(0, 40), ML + 260, y + 9)
+      doc.setTextColor(...INK)
+      y += 16
+    })
+  }
+
+  // ── Extension directory ───────────────────────────────────────────────────
+  if (users.length > 0) {
+    sectionHeader('Extension directory')
+    doc.setFillColor(...LINE)
+    doc.rect(ML, y - 2, BODY, 18, 'F')
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...MUTED)
+    doc.text('NAME', ML + 4, y + 10)
+    doc.text('EXT', ML + 160, y + 10)
+    doc.text('DIRECT DID', ML + 200, y + 10)
+    doc.text('ROLE', ML + 310, y + 10)
+    doc.text('VM', ML + 400, y + 10)
+    y += 20
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(...INK)
+    users.forEach((u, i) => {
+      checkY(16)
+      if (i % 2 === 0) {
+        doc.setFillColor(249, 250, 251)
+        doc.rect(ML, y - 2, BODY, 16, 'F')
+      }
+      doc.setFontSize(10)
+      doc.text(String(u.name || '').slice(0, 22), ML + 4, y + 9)
+      doc.setFont('helvetica', 'bold')
+      doc.text(String(u.extension || ''), ML + 160, y + 9)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(9)
+      doc.setTextColor(...MUTED)
+      doc.text(String(u.did || ''), ML + 200, y + 9)
+      doc.text(String(u.role || '').slice(0, 14), ML + 310, y + 9)
+      doc.text(u.voicemail ? 'Yes' : '', ML + 400, y + 9)
+      doc.setTextColor(...INK)
+      y += 16
+    })
+  }
+
+  // ── Auto attendant ────────────────────────────────────────────────────────
+  if (aaOptions.length > 0) {
+    sectionHeader('Auto attendant menu')
+    aaOptions.forEach(opt => {
+      checkY(20)
+      doc.setFillColor(...TEAL_BG)
+      doc.roundedRect(ML, y - 2, 26, 16, 3, 3, 'F')
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(...TEAL)
+      doc.text(String(opt.digit), ML + 13, y + 8, { align: 'center' })
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(10)
+      doc.setTextColor(...INK)
+      doc.text(String(opt.action || ''), ML + 34, y + 9)
+      y += 18
+    })
+  }
+
+  // ── Voicemail access ──────────────────────────────────────────────────────
+  sectionHeader('Voicemail access')
+  const vmSteps = [
+    'Press the Messages button (envelope icon) on your phone, or dial *97.',
+    'Enter your extension number when prompted, then your PIN.',
+    'Follow the menu to listen, delete, or save messages.',
+    'From outside the office: call your main number, press # during the greeting, then enter your extension and PIN.',
+  ]
+  vmSteps.forEach((step, i) => {
+    checkY(20)
+    doc.setFillColor(...TEAL)
+    doc.circle(ML + 7, y + 5, 7, 'F')
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...WHITE)
+    doc.text(String(i + 1), ML + 7, y + 8, { align: 'center' })
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.setTextColor(...INK)
+    const wrapped = doc.splitTextToSize(step, BODY - 24)
+    doc.text(wrapped, ML + 20, y + 8)
+    y += Math.max(18, wrapped.length * 13 + 4)
+  })
+
+  // ── Business hours & after-hours ──────────────────────────────────────────
+  sectionHeader('Business hours & after-hours routing')
+  const hoursLine = (hours.weekdayOpen && hours.weekdayClose)
+    ? `${hours.weekdayOpen} – ${hours.weekdayClose}${hours.timezone ? ` (${hours.timezone})` : ''}`
+    : null
+  if (hoursLine) {
+    labelValue('Business hours', hoursLine)
+  }
+  checkY(40)
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'normal')
+  doc.setTextColor(...INK)
+  const afterHoursText = 'After business hours, callers are automatically routed to voicemail or an after-hours auto attendant. No action needed on your end. To manually enable after-hours mode for holidays or unplanned closures, press the Night button on the designated front-desk phone.'
+  const afterWrapped = doc.splitTextToSize(afterHoursText, BODY)
+  doc.text(afterWrapped, ML, y)
+  y += afterWrapped.length * 13 + 8
+
+  // ── E911 locations ────────────────────────────────────────────────────────
+  if (e911Locs.length > 0) {
+    sectionHeader('E911 emergency addresses')
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(...MUTED)
+    const e911Note = 'These are the verified emergency addresses registered with your carrier. Call 911 from any phone and first responders will be dispatched to the address assigned to that device.'
+    const e911Wrapped = doc.splitTextToSize(e911Note, BODY)
+    doc.text(e911Wrapped, ML, y)
+    doc.setTextColor(...INK)
+    y += e911Wrapped.length * 12 + 8
+    e911Locs.forEach(loc => {
+      checkY(32)
+      doc.setFillColor(...OK_BG)
+      doc.roundedRect(ML, y - 2, BODY, 28, 3, 3, 'F')
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(...OK)
+      doc.text(String(loc.name || 'Location'), ML + 8, y + 9)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(9)
+      doc.setTextColor(...INK)
+      doc.text(String(loc.address || '—'), ML + 8, y + 21)
+      if (loc.notes) {
+        doc.setTextColor(...MUTED)
+        doc.text(String(loc.notes).slice(0, 60), ML + 8, y + 31)
+        y += 10
+      }
+      y += 34
+    })
+    if (data.e911Test?.testedAt) {
+      checkY(20)
+      doc.setFillColor(...OK_BG)
+      doc.roundedRect(ML, y, BODY, 18, 3, 3, 'F')
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(...OK)
+      doc.text('✓  911 test call completed', ML + 8, y + 12)
+      if (data.e911Test.testedBy) {
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(...MUTED)
+        doc.text(`by ${data.e911Test.testedBy} on ${new Date(data.e911Test.testedAt).toLocaleDateString()}`, ML + 160, y + 12)
+      }
+      doc.setTextColor(...INK)
+      y += 24
+    }
+  }
+
+  // ── Support & escalation ──────────────────────────────────────────────────
+  sectionHeader('Support contacts')
+  if (handoff.adminName || handoff.adminPhone || handoff.adminEmail) {
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...MUTED)
+    doc.text('YOUR ADMIN CONTACT', ML, y)
+    y += 12
+    labelValue('Name', handoff.adminName)
+    labelValue('Phone', handoff.adminPhone)
+    labelValue('Email', handoff.adminEmail)
+    y += 4
+  }
+  if (handoff.supportEscalation) {
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...MUTED)
+    doc.text('PROVIDER SUPPORT', ML, y)
+    y += 12
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.setTextColor(...INK)
+    const escWrapped = doc.splitTextToSize(handoff.supportEscalation, BODY)
+    doc.text(escWrapped, ML, y)
+    y += escWrapped.length * 13 + 6
+  }
+  if (job.supportEmail) {
+    labelValue('Support email', job.supportEmail)
+  }
+
+  // ── Additional notes ──────────────────────────────────────────────────────
+  if (handoff.notes) {
+    sectionHeader('Notes')
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(...INK)
+    const notesWrapped = doc.splitTextToSize(handoff.notes, BODY)
+    checkY(notesWrapped.length * 13 + 8)
+    doc.text(notesWrapped, ML, y)
+    y += notesWrapped.length * 13 + 8
+  }
+
+  // ── Sign-off ──────────────────────────────────────────────────────────────
+  checkY(100)
+  sectionHeader('Customer sign-off')
+  y += 4
+
+  const signBoxY = y
+  const signBoxH = 72
+  doc.setDrawColor(...LINE)
+  doc.setLineWidth(0.5)
+  doc.roundedRect(ML, signBoxY, BODY, signBoxH, 4, 4)
+
+  const colW = BODY / 3
+  ;[
+    ['Customer name', handoff.signOffName || ''],
+    ['Signature', ''],
+    ['Date', handoff.signOffDate || ''],
+  ].forEach(([label, val], i) => {
+    const x = ML + i * colW + 10
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...MUTED)
+    doc.text(label.toUpperCase(), x, signBoxY + 14)
+    if (val) {
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(11)
+      doc.setTextColor(...INK)
+      doc.text(val, x, signBoxY + 34)
+    }
+    // Signature line
+    doc.setDrawColor(...LINE)
+    doc.line(x, signBoxY + 56, x + colW - 20, signBoxY + 56)
+    if (i < 2) {
+      doc.setDrawColor(...LINE)
+      doc.line(ML + (i + 1) * colW, signBoxY + 8, ML + (i + 1) * colW, signBoxY + signBoxH - 8)
+    }
+  })
+
+  if (techName) {
+    y = signBoxY + signBoxH + 10
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(...MUTED)
+    doc.text(`Installed by ${techName} · ${today}`, ML, y)
+  }
+
+  // Footer on last page
+  pageFooter()
+
+  doc.save(`${slug}-handoff-${new Date().toISOString().slice(0, 10)}.pdf`)
 }

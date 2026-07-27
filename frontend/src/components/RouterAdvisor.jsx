@@ -84,16 +84,13 @@ export default function RouterAdvisor() {
 
   function openCustomerExport() {
     const html = prescriptionCustomerHtml(rx)
-    const w = window.open('', '_blank', 'noopener,noreferrer')
-    if (!w) {
-      setShowExport(true)
-      return
-    }
-    w.document.write(html)
-    w.document.close()
-    setTimeout(() => {
-      try { w.focus(); w.print() } catch { /* ignore */ }
-    }, 250)
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `router-advisor-${new Date().toISOString().slice(0, 10)}.html`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 10000)
   }
 
   return (

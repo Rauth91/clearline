@@ -7,6 +7,7 @@ import {
   exportGoLiveDoc,
   exportGoLiveHtml,
   exportHandoffDoc,
+  exportHandoffPdf,
   goLiveCompletionPercent,
   mergeGoLive,
   sectionProgressGoLive,
@@ -37,6 +38,7 @@ export default function GoLive({ jobId }) {
   const [port, setPort] = useState(() => getPort(jobId))
   const [activePanel, setActivePanel] = useState(null)
   const [exportingPdf, setExportingPdf] = useState(false)
+  const [exportingHandoff, setExportingHandoff] = useState(false)
   const [showE911Test, setShowE911Test] = useState(false)
   const [e911Form, setE911Form] = useState({ testedBy: '', method: 'test-call' })
 
@@ -254,6 +256,18 @@ export default function GoLive({ jobId }) {
     }
   }
 
+  async function handleHandoffPdf() {
+    setExportingHandoff(true)
+    try {
+      await exportHandoffPdf(golive, job || {}, provision, survey || {})
+    } catch (err) {
+      console.error(err)
+      alert('Could not generate handoff PDF.')
+    } finally {
+      setExportingHandoff(false)
+    }
+  }
+
   return (
     <section className="go-live">
       <ConflictBanner jobId={jobId} />
@@ -313,15 +327,16 @@ export default function GoLive({ jobId }) {
         <button type="button" className="btn btn-secondary" onClick={() => setSurveyTick(t => t + 1)}>
           Refresh provision
         </button>
-        <button type="button" className="btn btn-primary" onClick={exportPdf} disabled={exportingPdf}>
-          {exportingPdf ? 'Creating PDF…' : 'Export PDF'}
+        <button type="button" className="btn btn-primary" onClick={handleHandoffPdf} disabled={exportingHandoff}>
+          {exportingHandoff ? 'Creating PDF…' : 'Customer Handoff PDF'}
         </button>
         <details className="export-menu">
           <summary className="btn btn-secondary">More</summary>
           <div className="export-menu-panel">
-            <button type="button" onClick={() => exportGoLiveDoc(golive, job || {}, provision)}>Export Word</button>
-            <button type="button" onClick={() => exportGoLiveHtml(golive, job || {}, provision)}>Export HTML</button>
-            <button type="button" onClick={() => exportHandoffDoc(golive, job || {}, provision, job?.supportEmail || '')}>Customer Handoff Doc</button>
+            <button type="button" onClick={exportPdf} disabled={exportingPdf}>{exportingPdf ? 'Creating…' : 'Export Go-Live PDF'}</button>
+            <button type="button" onClick={() => exportGoLiveDoc(golive, job || {}, provision)}>Export Go-Live Word</button>
+            <button type="button" onClick={() => exportGoLiveHtml(golive, job || {}, provision)}>Export Go-Live HTML</button>
+            <button type="button" onClick={() => exportHandoffDoc(golive, job || {}, provision, job?.supportEmail || '')}>Customer Handoff HTML</button>
             <button type="button" onClick={reset}>Clear Go-Live</button>
           </div>
         </details>

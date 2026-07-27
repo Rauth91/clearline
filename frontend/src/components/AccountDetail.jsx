@@ -2,7 +2,7 @@
  * AccountDetail — account parent with Call flow | Jobs tabs
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import AccountCallFlow from './AccountCallFlow.jsx'
 import NsSync from './NsSync.jsx'
@@ -35,6 +35,8 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
   const [jobs, setJobs] = useState(() => listJobsForAccount(accountId))
   const [showNewJob, setShowNewJob] = useState(false)
   const [form, setForm] = useState({ customer: '', site: '', ticket: '', jobType: 'install' })
+  const [portalCopied, setPortalCopied] = useState(false)
+  const copyTimerRef = useRef(null)
 
   useEffect(() => {
     setAccount(getAccount(accountId))
@@ -120,15 +122,31 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
         <div className="survey-actions">
           <button
             type="button"
-            className="btn btn-ghost"
-            title="Share customer portal link"
+            className={`btn ${portalCopied ? 'btn-primary' : 'btn-ghost'}`}
+            title="Copy customer portal link to clipboard"
             onClick={() => {
               const url = `${window.location.origin}${window.location.pathname}#/portal/${account.id}`
-              navigator.clipboard?.writeText(url).catch(() => {})
-              window.prompt('Share this link with your customer:', url)
+              navigator.clipboard?.writeText(url).then(() => {
+                setPortalCopied(true)
+                clearTimeout(copyTimerRef.current)
+                copyTimerRef.current = setTimeout(() => setPortalCopied(false), 2500)
+              }).catch(() => {
+                // Fallback for browsers without clipboard API
+                const el = document.createElement('textarea')
+                el.value = url
+                el.style.position = 'fixed'
+                el.style.opacity = '0'
+                document.body.appendChild(el)
+                el.select()
+                document.execCommand('copy')
+                document.body.removeChild(el)
+                setPortalCopied(true)
+                clearTimeout(copyTimerRef.current)
+                copyTimerRef.current = setTimeout(() => setPortalCopied(false), 2500)
+              })
             }}
           >
-            Share portal
+            {portalCopied ? 'Link copied!' : 'Share portal'}
           </button>
           <button
             type="button"

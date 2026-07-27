@@ -48,8 +48,7 @@ export default class ErrorBoundary extends Component {
     try {
       await navigator.clipboard.writeText(text || 'Unknown error')
     } catch (err) {
-      console.error(err)
-      window.prompt('Copy error details:', text)
+      console.error('Could not copy error to clipboard:', err)
     }
   }
 
