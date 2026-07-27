@@ -6,6 +6,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { loadJobMigration, saveJobMigration } from '../lib/jobModel.js'
 import { makeId } from '../lib/surveyModel.js'
+import { getJob, getAccount, saveAccount } from '../lib/repo.js'
+import { createEmptyRoute } from '../lib/callFlowShape.js'
 
 /* ── CSV helpers ──────────────────────────────────────────── */
 function parseCSV(text) {
@@ -54,6 +56,15 @@ function detectType(rows) {
 const normDN  = s => { let d = String(s||'').replace(/\D/g,''); if(d.length===11&&d[0]==='1') d=d.slice(1); return d }
 const normMAC = s => String(s||'').replace(/[^0-9A-Fa-f]/g,'').toLowerCase()
 
+/** Return the extension column name if the Metaswitch CSV includes one, else null. */
+function findExtCol(row) {
+  if (!row) return null
+  for (const col of ['Extension number', 'Extension No', 'Extension', 'Ext']) {
+    if (col in row) return col
+  }
+  return null
+}
+
 function splitName(raw) {
   raw = String(raw||'').trim()
   if (!raw) return ['','']
@@ -99,6 +110,55 @@ function emptyMigration() {
     // buttonLayouts[]:  { id, extension, keyRows:[{id,type,value,label}], sidecarNotes, notes }
     build:{},
   }
+}
+
+/* ── Migration → Call Flow mapper ────────────────────────── */
+function migrationToRoutes(data) {
+  const callFlows = data.callFlows || []
+  const aas = data.autoAttendants || []
+  const hgs = data.huntGroups || []
+
+  const hgSummary = hgs.map(h =>
+    [h.name, h.type && `(${h.type})`, h.members && `Members: ${h.members}`].filter(Boolean).join(' — ')
+  ).join('\n')
+
+  function buildRoute(cf, aaIndex) {
+    const aa = aas[aaIndex] || null
+    const aaFields = {}
+    if (aa) {
+      aaFields.greeting = aa.name || ''
+      aaFields.notes = aa.scheduleNotes || ''
+      aaFields.timeoutAction = [aa.timeoutDest, aa.timeoutType].filter(Boolean).join(': ') || ''
+      ;(aa.menuKeys || []).forEach(k => {
+        const digit = String(k.digit || '')
+        if (digit !== '') {
+          aaFields[`option${digit}`] = k.destValue || k.destType || ''
+          aaFields[`optionType${digit}`] = k.destType || ''
+        }
+      })
+    }
+
+    const mainNumbers = cf && cf.phoneNumber
+      ? [{ id: makeId(), number: cf.phoneNumber, label: cf.normalDest || '' }]
+      : []
+
+    return createEmptyRoute({
+      name: cf ? (cf.phoneNumber || cf.normalDest || 'Main route') : 'Main route',
+      mainNumbers,
+      autoAttendant: aaFields,
+      callFlow: {
+        daytimePath: cf?.normalDest || (aa?.name ? `AA: ${aa.name}` : ''),
+        afterHoursPath: cf?.closedDest || '',
+        ringGroups: hgSummary,
+        notes: cf?.notes || '',
+      },
+    })
+  }
+
+  if (!callFlows.length) {
+    return [buildRoute(null, 0)]
+  }
+  return callFlows.map((cf, i) => buildRoute(cf, i))
 }
 
 /* ── Download helper ──────────────────────────────────────── */
@@ -410,11 +470,14 @@ function StepUsers({ data, onChange }) {
       return
     }
     const digits = parseInt(data.extDigits||4, 10)
+    const extCol = findExtCol(rows[0])
     const users = rows.map(ln => {
       const dn = normDN(ln['Directory number'])
       if (!dn) return null
       const [first, last] = splitName(ln['Name'])
-      return { id:makeId(), dn, ext:dn.slice(-digits), firstName:first, lastName:last,
+      const rawExt = extCol ? String(ln[extCol] || '').replace(/\D/g, '') : ''
+      const ext = rawExt || dn.slice(-digits)
+      return { id:makeId(), dn, ext, firstName:first, lastName:last,
         email:'', vmPin:data.pin||'1234', dept:ln['Department']||'', site:'', did:dn }
     }).filter(Boolean)
     onChange({ ...data, users })
@@ -438,7 +501,7 @@ function StepUsers({ data, onChange }) {
     setExtOverrides(prev => {
       const next = { ...prev }
       const u = data.users.find(u=>u.dn===dn)
-      const auto = u ? (u.dn||'').slice(-(parseInt(data.extDigits||4,10))) : ''
+      const auto = u ? (u.ext || '') : ''
       if (newExt === auto) delete next[dn]
       else next[dn] = newExt
       return next
@@ -845,9 +908,29 @@ function StepSystem({ data, onChange }) {
 /* ════════════════════════════════════════════════════════════
    STEP 5 — Build
    ════════════════════════════════════════════════════════════ */
-function StepBuild({ data, onChange }) {
+function StepBuild({ data, onChange, jobId }) {
+  const [syncState, setSyncState] = useState(null) // null | 'syncing' | 'done' | 'no-account' | 'error'
+
   function toggleDone(key) {
     onChange({ ...data, build:{ ...(data.build||{}), [key]:!(data.build||{})[key] } })
+  }
+
+  async function handleSyncToCallFlow() {
+    setSyncState('syncing')
+    try {
+      const job = jobId ? getJob(jobId) : null
+      const accountId = job?.account_id
+      if (!accountId) { setSyncState('no-account'); return }
+      const account = getAccount(accountId)
+      if (!account) { setSyncState('no-account'); return }
+      const routes = migrationToRoutes(data)
+      saveAccount({ ...account, routes })
+      setSyncState('done')
+      setTimeout(() => setSyncState(null), 3000)
+    } catch (err) {
+      console.error('Sync to call flow failed', err)
+      setSyncState('error')
+    }
   }
 
   const { userRows, phoneRows, e911Rows, reviewRows } = useMemo(() => {
@@ -931,6 +1014,33 @@ function StepBuild({ data, onChange }) {
           <div className="mig-progress-bar" style={{width:`${pct}%`}}/>
         </div>
         <div className="mig-progress-label">{doneCount} of {totalItems} steps complete — {pct}%</div>
+      </div>
+
+      {/* Sync to Call Flow */}
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Call Flow Diagram</div>
+        <p className="mig-hint">
+          Push call flows, auto attendants, and hunt groups from this migration into the account&rsquo;s
+          call flow diagram. Existing diagram data will be replaced.
+        </p>
+        <div style={{display:'flex',alignItems:'center',gap:12}}>
+          <button
+            type="button"
+            className={`btn${syncState==='done'?' btn-primary':' btn-secondary'}`}
+            disabled={syncState==='syncing'}
+            onClick={handleSyncToCallFlow}
+          >
+            {syncState==='syncing' ? 'Syncing…'
+              : syncState==='done' ? '✓ Call flow updated'
+              : 'Sync to call flow diagram'}
+          </button>
+          {syncState==='no-account' && (
+            <span className="mns-ext-warn">No account linked to this job — open the job from an account to enable sync.</span>
+          )}
+          {syncState==='error' && (
+            <span className="mns-ext-warn">Sync failed — check console for details.</span>
+          )}
+        </div>
       </div>
 
       {/* Downloads */}
@@ -1060,7 +1170,7 @@ export default function MigrationWorkspace({ jobId }) {
     <StepUsers    key="users"    data={data} onChange={handleChange}/>,
     <StepDevices  key="devices"  data={data} onChange={handleChange}/>,
     <StepSystem   key="system"   data={data} onChange={handleChange}/>,
-    <StepBuild    key="build"    data={data} onChange={handleChange}/>,
+    <StepBuild    key="build"    data={data} onChange={handleChange} jobId={jobId}/>,
   ]
 
   return (
