@@ -690,15 +690,12 @@ function StepDevices({ data, onChange }) {
 }
 
 /* ── Button Layout split-panel ────────────────────────────── */
-function BLPanel({ layouts, onAdd, onUpdate, onRemove }) {
+function BLPanel({ layouts, users = [], onAdd, onUpdate, onRemove, onAutoPopulate }) {
   const [selectedId, setSelectedId] = useState(layouts[0]?.id || null)
   const selected = layouts.find(bl => bl.id === selectedId) || layouts[0] || null
 
-  // When a new layout is added, select it
-  function handleAdd() {
-    onAdd()
-    // onAdd mutates parent data; we'll select the new one via useEffect
-  }
+  function handleAdd() { onAdd() }
+
   useEffect(() => {
     if (!selected && layouts.length) setSelectedId(layouts[0].id)
     if (selected && !layouts.find(bl => bl.id === selected.id)) {
@@ -706,8 +703,31 @@ function BLPanel({ layouts, onAdd, onUpdate, onRemove }) {
     }
   }, [layouts])
 
+  // Count users not yet in layouts
+  const existingExts = new Set(layouts.map(b => b.extension).filter(Boolean))
+  const missingCount = users.filter(u => u.ext && !existingExts.has(u.ext)).length
+
   return (
     <div className="mig-sys-panel">
+      {/* Auto-populate bar */}
+      {users.length > 0 && (
+        <div className="mig-bl-auto-bar">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={missingCount === 0}
+            onClick={onAutoPopulate}
+          >
+            {missingCount === 0
+              ? '✓ All users added'
+              : `Auto-populate ${missingCount} phone${missingCount !== 1 ? 's' : ''} from users`}
+          </button>
+          {layouts.length > 0 && missingCount > 0 && (
+            <span className="mns-hint">Adds missing only — existing entries are kept.</span>
+          )}
+        </div>
+      )}
+
       <div className="mig-bl-split">
         {/* Left: extension list */}
         <div className="mig-bl-list">
@@ -716,10 +736,13 @@ function BLPanel({ layouts, onAdd, onUpdate, onRemove }) {
               className={`mig-bl-list-item${bl.id===selected?.id?' is-active':''}`}
               onClick={()=>setSelectedId(bl.id)}>
               <span className="mig-bl-item-ext">{bl.extension||<span style={{opacity:.4}}>No ext</span>}</span>
-              <span className="mig-bl-item-meta">
-                {(bl.pages||[]).reduce((s,p)=>s+(p.keys||[]).length,0)} keys
-                {(bl.pages||[]).length > 1 ? `, ${(bl.pages||[]).length} pages` : ''}
-              </span>
+              <div className="mig-bl-item-meta">
+                {bl.name && <span className="mig-bl-item-name">{bl.name}</span>}
+                <span>
+                  {(bl.pages||[]).reduce((s,p)=>s+(p.keys||[]).length,0)} keys
+                  {(bl.pages||[]).length > 1 ? `, ${(bl.pages||[]).length} pages` : ''}
+                </span>
+              </div>
             </button>
           ))}
           <button type="button" className="mig-bl-add-btn" onClick={handleAdd}>+ Add phone</button>
@@ -729,10 +752,15 @@ function BLPanel({ layouts, onAdd, onUpdate, onRemove }) {
         {selected ? (
           <div className="mig-bl-editor">
             <div className="mig-bl-editor-head">
-              <input className="mig-card-title-input" style={{flex:1}}
-                value={selected.extension}
-                onChange={e=>onUpdate(selected.id,'extension',e.target.value)}
-                placeholder="Extension (e.g. 1001)"/>
+              <div style={{flex:1}}>
+                <input className="mig-card-title-input" style={{width:'100%'}}
+                  value={selected.extension}
+                  onChange={e=>onUpdate(selected.id,'extension',e.target.value)}
+                  placeholder="Extension (e.g. 1001)"/>
+                {selected.name && (
+                  <div style={{fontSize:12,color:'var(--muted)',marginTop:2}}>{selected.name}</div>
+                )}
+              </div>
               <button type="button" className="mig-del-btn" style={{marginLeft:8}}
                 onClick={()=>onRemove(selected.id)}>Remove phone</button>
             </div>
@@ -746,7 +774,11 @@ function BLPanel({ layouts, onAdd, onUpdate, onRemove }) {
             </Field>
           </div>
         ) : (
-          <div className="mig-bl-empty">No phones added yet — click <strong>+ Add phone</strong> to start.</div>
+          <div className="mig-bl-empty">
+            {users.length > 0
+              ? <>Click <strong>Auto-populate</strong> above to add all users, or <strong>+ Add phone</strong> to add one manually.</>
+              : <>No phones added yet — click <strong>+ Add phone</strong> to start.</>}
+          </div>
         )}
       </div>
     </div>
@@ -777,9 +809,32 @@ function StepSystem({ data, onChange }) {
   function updateHG(id,f,v) { onChange({ ...data, huntGroups:data.huntGroups.map(h=>h.id===id?{...h,[f]:v}:h) }) }
   function removeHG(id)   { onChange({ ...data, huntGroups:data.huntGroups.filter(h=>h.id!==id) }) }
 
-  function addBL()        { onChange({ ...data, buttonLayouts:[...(data.buttonLayouts||[]),{id:makeId(),extension:'',pages:[{id:makeId(),label:'Page 1',keys:[]}],sidecarNotes:'',notes:''}] }) }
+  function addBL()        { onChange({ ...data, buttonLayouts:[...(data.buttonLayouts||[]),{id:makeId(),extension:'',name:'',pages:[{id:makeId(),label:'Page 1',keys:[]}],sidecarNotes:'',notes:''}] }) }
   function updateBL(id,f,v) { onChange({ ...data, buttonLayouts:data.buttonLayouts.map(b=>b.id===id?{...b,[f]:v}:b) }) }
   function removeBL(id)   { onChange({ ...data, buttonLayouts:data.buttonLayouts.filter(b=>b.id!==id) }) }
+
+  function autoPopulateLayouts() {
+    const users = data.users || []
+    const existing = new Set((data.buttonLayouts||[]).map(b => b.extension).filter(Boolean))
+    const toAdd = users.filter(u => u.ext && !existing.has(u.ext))
+    if (!toAdd.length) return
+    const newLayouts = toAdd.map(u => {
+      const name = [u.firstName, u.lastName].filter(Boolean).join(' ')
+      return {
+        id: makeId(),
+        extension: u.ext,
+        name,
+        pages: [{
+          id: makeId(),
+          label: 'Page 1',
+          keys: [{ id: makeId(), type: 'line', value: u.ext, label: name }],
+        }],
+        sidecarNotes: '',
+        notes: '',
+      }
+    })
+    onChange({ ...data, buttonLayouts: [...(data.buttonLayouts||[]), ...newLayouts] })
+  }
 
   const HG_TYPES = ['Ring All','Linear','Circular','Round Robin','Longest Idle']
 
@@ -899,7 +954,7 @@ function StepSystem({ data, onChange }) {
 
       {/* Button Layouts */}
       {tab === 'bl' && (
-        <BLPanel layouts={data.buttonLayouts||[]} onAdd={addBL} onUpdate={updateBL} onRemove={removeBL}/>
+        <BLPanel layouts={data.buttonLayouts||[]} users={data.users||[]} onAdd={addBL} onUpdate={updateBL} onRemove={removeBL} onAutoPopulate={autoPopulateLayouts}/>
       )}
     </div>
   )

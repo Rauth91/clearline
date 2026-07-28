@@ -12166,8 +12166,27 @@ select {
 .mig-bl-list-item.is-active .mig-bl-item-ext { color: var(--accent); }
 
 .mig-bl-item-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   font-size: 10px;
   color: var(--muted);
+}
+
+.mig-bl-item-name {
+  font-size: 11px;
+  color: var(--ink);
+  opacity: .7;
+  font-weight: 500;
+}
+
+.mig-bl-auto-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0 14px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
 }
 
 .mig-bl-add-btn {
