@@ -9,6 +9,7 @@ import NsSync from './NsSync.jsx'
 import { ChangeRequestInbox } from './CustomerPortal.jsx'
 import {
   createJob,
+  deleteJob,
   listJobsForAccount,
   openJob,
 } from '../lib/jobModel.js'
@@ -228,15 +229,30 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
                 const isMig = job.jobType === 'migration'
                 const dest = isMig ? `/job/${job.id}/migration` : `/job/${job.id}`
                 return (
-                  <button key={job.id} type="button" className="acct-job-row"
-                    onClick={() => { openJob(job.id); navigate(dest) }}>
-                    <span className={`acct-job-type${isMig ? ' is-migration' : ''}`}>
-                      {isMig ? 'Migration' : 'Install'}
-                    </span>
-                    <span className="acct-job-name">{job.customer || 'Untitled'}{job.site ? ` · ${job.site}` : ''}</span>
-                    <span className="acct-job-date">{job.updatedAt ? new Date(job.updatedAt).toLocaleDateString() : ''}</span>
-                    <span className="acct-job-arrow">→</span>
-                  </button>
+                  <div key={job.id} className="acct-job-row">
+                    <button type="button" className="acct-job-row-main"
+                      onClick={() => { openJob(job.id); navigate(dest) }}>
+                      <span className={`acct-job-type${isMig ? ' is-migration' : ''}`}>
+                        {isMig ? 'Migration' : 'Install'}
+                      </span>
+                      <span className="acct-job-name">{job.customer || 'Untitled'}{job.site ? ` · ${job.site}` : ''}</span>
+                      <span className="acct-job-date">{job.updatedAt ? new Date(job.updatedAt).toLocaleDateString() : ''}</span>
+                      <span className="acct-job-arrow">→</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="acct-job-delete-btn"
+                      title="Delete job"
+                      onClick={() => {
+                        const name = job.customer || job.site || 'this job'
+                        if (!confirm(`Permanently delete "${name}"?\n\nAll survey, design, and go-live data for this job will be erased. Export the job file first if you need it later.`)) return
+                        deleteJob(job.id)
+                        setJobs(listJobsForAccount(accountId))
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
                 )
               })}
             </div>

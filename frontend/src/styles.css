@@ -8926,22 +8926,50 @@ a.btn {
 
 .acct-job-row {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  align-items: stretch;
   background: var(--bg1);
   border: 1px solid var(--line);
   border-radius: 8px;
   margin-bottom: 6px;
-  text-align: left;
-  cursor: pointer;
-  width: 100%;
   transition: border-color .15s, box-shadow .15s;
 }
 
 .acct-job-row:hover {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.acct-job-row-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+.acct-job-delete-btn {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  background: none;
+  border: none;
+  border-left: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 0 8px 8px 0;
+  transition: background .15s, color .15s;
+  flex-shrink: 0;
+}
+
+.acct-job-delete-btn:hover {
+  background: rgba(239,68,68,.08);
+  color: #ef4444;
 }
 
 .acct-job-type {
