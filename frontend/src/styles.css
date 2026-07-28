@@ -4125,9 +4125,76 @@ a.btn {
   min-width: 0;
 }
 
+.acf-diagram-wrap {
+  position: relative;
+}
+
+.acf-diagram-expand-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity .15s, color .15s;
+}
+
+.acf-diagram-wrap:hover .acf-diagram-expand-btn {
+  opacity: 1;
+}
+
+.acf-diagram-expand-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* In compact mode, give the call flow diagram more height */
 .acf-diagram-col .call-flow-mode-compact .call-flow-viewport {
   height: clamp(320px, 55vh, 640px) !important;
+}
+
+/* Fullscreen diagram overlay */
+.acf-diagram-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  background: var(--bg0);
+  display: flex;
+  flex-direction: column;
+}
+
+.acf-diagram-fullscreen-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.acf-diagram-fullscreen-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.acf-diagram-fullscreen-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.acf-diagram-fullscreen-body .call-flow-viewport {
+  height: calc(100vh - 57px) !important;
 }
 
 .acf-panel-col {

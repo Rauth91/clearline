@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import CallFlowDiagram from './CallFlowDiagram.jsx'
 import {
   callFlowSummary,
@@ -85,6 +86,7 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
   const [showTemplates, setShowTemplates] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showSaveTemplate, setShowSaveTemplate] = useState(false)
+  const [diagramExpanded, setDiagramExpanded] = useState(false)
   const templateNameRef = useRef('')
   const templateDescRef = useRef('')
 
@@ -153,6 +155,7 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
         setShowTemplates(false)
         setShowShortcuts(false)
         setShowSaveTemplate(false)
+        setDiagramExpanded(false)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -416,16 +419,52 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
 
         {/* Left — diagram */}
         <div className="acf-diagram-col">
-          <CallFlowDiagram
-            design={diagramDesign}
-            compact
-            onGoToSection={(key) => setActiveSection(key)}
-          />
+          <div className="acf-diagram-wrap">
+            <CallFlowDiagram
+              design={diagramDesign}
+              compact
+              onGoToSection={(key) => setActiveSection(key)}
+            />
+            <button
+              type="button"
+              className="acf-diagram-expand-btn"
+              title="Expand diagram (Esc to close)"
+              onClick={() => setDiagramExpanded(true)}
+            >
+              ⛶
+            </button>
+          </div>
           <details className="account-summary-preview" style={{ marginTop: 12 }}>
             <summary>Plain-text summary — all routes</summary>
             <pre className="account-summary-pre">{callFlowSummary(account)}</pre>
           </details>
         </div>
+
+        {/* Fullscreen diagram overlay */}
+        {diagramExpanded && createPortal(
+          <div className="acf-diagram-fullscreen" role="dialog" aria-modal="true">
+            <div className="acf-diagram-fullscreen-header">
+              <span className="acf-diagram-fullscreen-title">
+                {account?.name || 'Call Flow'} — {activeRoute?.name || 'Main route'}
+              </span>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setDiagramExpanded(false)}
+              >
+                ✕ Close
+              </button>
+            </div>
+            <div className="acf-diagram-fullscreen-body">
+              <CallFlowDiagram
+                design={diagramDesign}
+                compact
+                onGoToSection={(key) => { setActiveSection(key); setDiagramExpanded(false) }}
+              />
+            </div>
+          </div>,
+          document.body,
+        )}
 
         {/* Right — contextual edit panel */}
         <div className="acf-panel-col">
