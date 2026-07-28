@@ -132,7 +132,7 @@ function mapModel(m) {
 function transform(lines, devices, dns, cfg) {
   const review = []
   const flag = (issue, key, detail, action) => review.push({ Issue: issue, Key: key, Detail: detail, 'Action Needed': action })
-  const { extDigits = 4, extOverrides = {} } = cfg
+  const { extDigits = 4, extOverrides = {}, extCol = null } = cfg
 
   const devByDN = {}
   devices.forEach(d => {
@@ -146,7 +146,6 @@ function transform(lines, devices, dns, cfg) {
     const dn = normDN(ln['Directory number'])
     if (!dn) { flag('Line with no DN', '', '(blank directory number)', 'Check the Metaswitch export'); return }
 
-    const extCol = findExtCol(ln)
     const rawExt = extCol ? String(ln[extCol] || '').replace(/\D/g, '') : ''
     const ext = extOverrides[dn] !== undefined ? extOverrides[dn] : (rawExt || dn.slice(-parseInt(extDigits, 10)))
 
@@ -278,10 +277,8 @@ function FileSlot({ label, hint, fileKey, required, rows, onLoad }) {
 }
 
 /* ── Extension preview/editor ─────────────────────────────── */
-function ExtEditor({ lines, extDigits, extOverrides, onChange }) {
+function ExtEditor({ lines, extDigits, extOverrides, extCol, onChange }) {
   if (!lines || !lines.length) return null
-
-  const extCol = findExtCol(lines[0])
 
   const rows = lines
     .map(ln => {
@@ -311,8 +308,8 @@ function ExtEditor({ lines, extDigits, extOverrides, onChange }) {
             : <span className="mns-ext-ok">No collisions</span>}
           {' · '}
           {extCol
-            ? <span className="mns-ext-ok">Extensions from column &ldquo;{extCol}&rdquo;</span>
-            : <span className="mns-ext-warn">No extension column found — slicing last {extDigits} digits of DN</span>}
+            ? <span className="mns-ext-ok">Extensions from &ldquo;{extCol}&rdquo;</span>
+            : <span className="mns-ext-warn">Slicing last {extDigits} digits of DN — pick a column above to use actual extensions</span>}
         </span>
         {hasOverrides && (
           <button type="button" className="btn btn-secondary mns-ext-reset"
@@ -392,9 +389,16 @@ export default function MetaToNs() {
   const [fileNames, setFileNames] = useState({ lines: '', devices: '', dns: '' })
   const [cfg, setCfg] = useState(DEFAULT_CFG)
   const [extOverrides, setExtOverrides] = useState({})
+  const [selectedExtCol, setSelectedExtCol] = useState('') // '' = slice from DN
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
   const [autoDetectLog, setAutoDetectLog] = useState([])
+
+  // All columns available in the Lines CSV (excluding Directory number itself)
+  const linesColumns = useMemo(() => {
+    if (!files.lines?.length) return []
+    return Object.keys(files.lines[0]).filter(k => k !== 'Directory number')
+  }, [files.lines])
 
   function handleLoad(slotKey, rows, name) {
     if (!rows) {
@@ -415,6 +419,7 @@ export default function MetaToNs() {
     setResult(null)
     setError('')
     setExtOverrides({})
+    if (targetKey === 'lines') setSelectedExtCol('')
     if (log) setAutoDetectLog(prev => [...prev.slice(-2), log])
   }
 
@@ -424,20 +429,17 @@ export default function MetaToNs() {
   const hasCollisions = useMemo(() => {
     if (!files.lines) return false
     const digits = parseInt(cfg.extDigits, 10) || 4
-    const extCol = findExtCol(files.lines[0])
     const seen = {}
     for (const ln of files.lines) {
       const dn = normDN(ln['Directory number'])
       if (!dn) continue
-      const rawExt = extCol ? String(ln[extCol] || '').replace(/\D/g, '') : ''
+      const rawExt = selectedExtCol ? String(ln[selectedExtCol] || '').replace(/\D/g, '') : ''
       const ext = extOverrides[dn] !== undefined ? extOverrides[dn] : (rawExt || dn.slice(-digits))
       if (seen[ext] && seen[ext] !== dn) return true
       seen[ext] = dn
     }
     return false
-  }, [files.lines, cfg.extDigits, extOverrides])
-
-  const extColDetected = useMemo(() => files.lines?.length ? findExtCol(files.lines[0]) : null, [files.lines])
+  }, [files.lines, cfg.extDigits, extOverrides, selectedExtCol])
 
   const canBuild = files.lines && files.devices && cfg.domain.trim() && !hasCollisions
 
@@ -457,6 +459,7 @@ export default function MetaToNs() {
         ...cfg,
         extDigits: parseInt(cfg.extDigits, 10) || 4,
         extOverrides,
+        extCol: selectedExtCol || null,
         e911: cfg.e911.trim() || cfg.cidNum.trim(),
       })
       setResult(R)
@@ -532,20 +535,37 @@ export default function MetaToNs() {
             </div>
           ))}
           <div className="mns-field">
-            <label className="mns-label">Extension digits{extColDetected && <span className="mns-ext-ok" style={{marginLeft:6,fontSize:11}}>fallback only</span>}</label>
+            <label className="mns-label">Extension source</label>
             <select
               className="mns-input"
-              value={cfg.extDigits}
-              onChange={e => { setField('extDigits', e.target.value); setExtOverrides({}) }}
+              value={selectedExtCol}
+              onChange={e => { setSelectedExtCol(e.target.value); setExtOverrides({}) }}
             >
-              <option value="3">Last 3 digits</option>
-              <option value="4">Last 4 digits (default)</option>
-              <option value="5">Last 5 digits</option>
+              <option value="">— Slice last N digits of DN —</option>
+              {linesColumns.map(col => (
+                <option key={col} value={col}>{col}</option>
+              ))}
             </select>
-            {extColDetected
-              ? <div className="mns-hint">Extensions read from &ldquo;{extColDetected}&rdquo; column. DN slice used only when that field is blank.</div>
-              : <div className="mns-hint">How many digits to slice from the DN for the extension. Upload a Lines CSV to auto-detect.</div>}
+            <div className="mns-hint">
+              {selectedExtCol
+                ? `Using "${selectedExtCol}" column as extension. Upload Lines CSV to see all available columns.`
+                : 'Pick a column from your Lines CSV that contains the extension number, or leave as DN-slice.'}
+            </div>
           </div>
+          {!selectedExtCol && (
+            <div className="mns-field">
+              <label className="mns-label">Digits to slice</label>
+              <select
+                className="mns-input"
+                value={cfg.extDigits}
+                onChange={e => { setField('extDigits', e.target.value); setExtOverrides({}) }}
+              >
+                <option value="3">Last 3 digits</option>
+                <option value="4">Last 4 digits (default)</option>
+                <option value="5">Last 5 digits</option>
+              </select>
+            </div>
+          )}
         </div>
         <label className="mns-checkline">
           <input type="checkbox" checked={cfg.line2} onChange={e => setField('line2', e.target.checked)} />
@@ -563,6 +583,7 @@ export default function MetaToNs() {
             lines={files.lines}
             extDigits={cfg.extDigits}
             extOverrides={extOverrides}
+            extCol={selectedExtCol || null}
             onChange={setExtOverrides}
           />
         </div>

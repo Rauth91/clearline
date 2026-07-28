@@ -126,6 +126,7 @@ function migrationToRoutes(data) {
     const aa = aas[aaIndex] || null
     const aaFields = {}
     if (aa) {
+      aaFields.enabled = 'Yes'
       aaFields.greeting = aa.name || ''
       aaFields.notes = aa.scheduleNotes || ''
       aaFields.timeoutAction = [aa.timeoutDest, aa.timeoutType].filter(Boolean).join(': ') || ''
@@ -462,6 +463,8 @@ function StepAccount({ data, onChange }) {
 function StepUsers({ data, onChange }) {
   const [importLog, setImportLog] = useState([])
   const [extOverrides, setExtOverrides] = useState({})
+  const [selectedExtCol, setSelectedExtCol] = useState('')
+  const [linesColumns, setLinesColumns] = useState([])
 
   function handleCSV(rows, filename) {
     const type = detectType(rows)
@@ -469,20 +472,37 @@ function StepUsers({ data, onChange }) {
       setImportLog(l=>[...l.slice(-2), `"${filename}" — not a Lines file`])
       return
     }
+    // Capture all columns for the picker
+    const cols = Object.keys(rows[0] || {}).filter(k => k !== 'Directory number')
+    setLinesColumns(cols)
+    setSelectedExtCol('')
+
     const digits = parseInt(data.extDigits||4, 10)
-    const extCol = findExtCol(rows[0])
     const users = rows.map(ln => {
       const dn = normDN(ln['Directory number'])
       if (!dn) return null
       const [first, last] = splitName(ln['Name'])
-      const rawExt = extCol ? String(ln[extCol] || '').replace(/\D/g, '') : ''
-      const ext = rawExt || dn.slice(-digits)
+      // No ext col selected yet — use DN slice as initial value; user picks column after
+      const ext = dn.slice(-digits)
       return { id:makeId(), dn, ext, firstName:first, lastName:last,
-        email:'', vmPin:data.pin||'1234', dept:ln['Department']||'', site:'', did:dn }
+        email:'', vmPin:data.pin||'1234', dept:ln['Department']||'', site:'', did:dn,
+        _rawRow: ln }
     }).filter(Boolean)
     onChange({ ...data, users })
     setExtOverrides({})
-    setImportLog(l=>[...l.slice(-2), `${users.length} users imported from "${filename}"`])
+    setImportLog(l=>[...l.slice(-2), `${users.length} users imported from "${filename}" — pick extension column below`])
+  }
+
+  function applyExtColumn(col) {
+    setSelectedExtCol(col)
+    setExtOverrides({})
+    const digits = parseInt(data.extDigits||4, 10)
+    const next = (data.users||[]).map(u => {
+      if (!u._rawRow) return u
+      const rawExt = col ? String(u._rawRow[col] || '').replace(/\D/g, '') : ''
+      return { ...u, ext: rawExt || u.dn.slice(-digits) }
+    })
+    onChange({ ...data, users: next })
   }
 
   const { rows: extRows, collisions } = useMemo(() => {
@@ -532,6 +552,16 @@ function StepUsers({ data, onChange }) {
         {importLog.length > 0 && (
           <div className="mns-detect-log" style={{marginTop:8}}>
             {importLog.map((m,i)=><span key={i} className="mns-detect-chip">✓ {m}</span>)}
+          </div>
+        )}
+        {linesColumns.length > 0 && (
+          <div className="mig-field-row" style={{marginTop:12}}>
+            <Field label="Extension column" hint={selectedExtCol ? `Using "${selectedExtCol}" as extension` : 'No column selected — using last digits of DN'}>
+              <select className="mns-input" value={selectedExtCol} onChange={e=>applyExtColumn(e.target.value)}>
+                <option value="">— Slice last {data.extDigits||4} digits of DN —</option>
+                {linesColumns.map(col=><option key={col} value={col}>{col}</option>)}
+              </select>
+            </Field>
           </div>
         )}
       </div>
