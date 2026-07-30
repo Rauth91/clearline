@@ -8,15 +8,33 @@ import { loadJobMigration, saveJobMigration } from '../lib/jobModel.js'
 import { makeId } from '../lib/surveyModel.js'
 import { getJob, getAccount, saveAccount } from '../lib/repo.js'
 import { createEmptyRoute } from '../lib/callFlowShape.js'
+import { FIRMWARE_STARTER_SET, listFirmwareRefs } from '../lib/firmwareModel.js'
+import {
+  DECOMMISSION_CHECKS,
+  FOLLOWUP_CHECKS,
+  INSTALL_CHECKS,
+  PLANNING_CHECKS,
+  QC_CHECKS,
+  RESEARCH_CHECKS,
+  RPP_CHECKS,
+  buildDeviceReadiness,
+  canCompleteMetaDecommission,
+  checklistComplete,
+  compareMigrationNumberLists,
+  migrationPhaseCompletion,
+} from '../lib/migrationLifecycle.js'
 import {
   analyzeDeviceExtensionAssignments,
   analyzeMigrationExtensions,
+  buildYealinkServerAudit,
   cleanImportedField,
   cleanMigrationName,
   extensionsByDn,
   migrationE911Fields,
   migrationUserFromLine,
   normalizeMigrationExtension,
+  yealinkAuditExceptions,
+  yealinkServerDeviceFromRow,
 } from '../lib/migrationExtensions.js'
 
 /* ── CSV helpers ──────────────────────────────────────────── */
@@ -57,6 +75,7 @@ function toCSV(cols, rows) {
 function detectType(rows) {
   if (!rows?.length) return null
   const keys = new Set(Object.keys(rows[0]))
+  if (keys.has('MAC') && keys.has('Device Status') && keys.has('Last Report Time')) return 'yealink-server'
   if (keys.has('MAC Address') && keys.has('Device Model')) return 'devices'
   if (keys.has('Directory number') && keys.has('Name')) return 'lines'
   if (keys.has('Directory number')) return 'dns'
@@ -98,10 +117,17 @@ function emptyMigration() {
     area:'', pin:'1234', scope:'Basic User',
     dialPerm:'US and Canada', emailDom:'', timeout:'25',
     line2:true,
-    users:[], devices:[],
+    users:[], devices:[], sharedDeviceApprovals:[],
+    yealinkServerDevices:[], yealinkAuditFileName:'',
     autoAttendants:[], callFlows:[], huntGroups:[], buttonLayouts:[],
     // autoAttendants[]: { id, name, scheduleNotes, timeoutType, timeoutDest, menuKeys:[{id,digit,destType,destValue}] }
     // buttonLayouts[]:  { id, extension, keyRows:[{id,type,value,label}], sidecarNotes, notes }
+    research:{ checks:{}, contact:'', sites:'', targetDate:'', scope:'', currentSystem:'Meta', portingStatus:'', risks:'', notes:'', feasibility:'', rationale:'' },
+    planning:{ checks:{}, owner:'', firmwarePlan:'', replacementPlan:'', networkPlan:'', cutoverWindow:'', rollbackPlan:'', dependencies:'', notes:'' },
+    rpp:{ checks:{}, accountId:'', targetPlatform:'NetSapiens', expectedNumbers:'', resultingNumbers:'', technician:'', completedAt:'', exceptions:'', notes:'' },
+    install:{ checks:{}, notes:'' },
+    followup:{ checks:{}, followupDate:'', openIssues:'', customerApproved:false, approvedBy:'', notes:'' },
+    decommission:{ checks:{}, completedBy:'', completedAt:'', notes:'' },
     build:{},
   }
 }
@@ -184,6 +210,40 @@ function MSelect({ value, onChange, options }) {
       {options.map(o=><option key={o.value??o} value={o.value??o}>{o.label??o}</option>)}
     </select>
   )
+}
+
+function MTextarea({ value, onChange, placeholder, rows=3 }) {
+  return <textarea className="mns-input mig-textarea" rows={rows} value={value||''} onChange={e=>onChange(e.target.value)} placeholder={placeholder}/>
+}
+
+function ChecklistPanel({ items, values = {}, onChange, disabledKeys = new Set() }) {
+  return (
+    <div className="mig-lifecycle-checklist">
+      {items.map(item => {
+        const done = !!values[item.key]
+        const disabled = disabledKeys.has(item.key)
+        return (
+          <button
+            key={item.key}
+            type="button"
+            className={`mig-check-row${done?' is-done':''}${disabled?' is-disabled':''}`}
+            disabled={disabled}
+            onClick={()=>onChange({ ...values, [item.key]:!done })}
+          >
+            <span className={`mig-check-box${done?' is-checked':''}`}>{done?'✓':''}</span>
+            <span className="mig-check-content">
+              <span className="mig-check-label">{item.label}</span>
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function PhaseWarning({ children }) {
+  if (!children) return null
+  return <div className="mig-phase-warning">{children}</div>
 }
 
 /* ── Button Layout paged key builder ─────────────────────── */
@@ -358,6 +418,164 @@ function UploadSlot({ label, hint, loaded, count, onFile }) {
         <div className="mns-slot-meta">{loaded?`${count} rows loaded`:hint}</div>
       </div>
       <input ref={ref} type="file" accept=".csv" style={{display:'none'}} onChange={e=>handle(e.target.files[0])}/>
+    </div>
+  )
+}
+
+/* ════════════════════════════════════════════════════════════
+   LIFECYCLE — Research
+   ════════════════════════════════════════════════════════════ */
+function StepResearch({ data, onChange }) {
+  const [firmwareRefs, setFirmwareRefs] = useState([])
+  const [firmwareLoading, setFirmwareLoading] = useState(true)
+  const research = data.research || {}
+
+  useEffect(() => {
+    let active = true
+    listFirmwareRefs()
+      .then(rows => { if (active) setFirmwareRefs(rows.length ? rows : FIRMWARE_STARTER_SET) })
+      .catch(err => console.error('Firmware references unavailable', err))
+      .finally(() => { if (active) setFirmwareLoading(false) })
+    return () => { active = false }
+  }, [])
+
+  const readiness = useMemo(() => {
+    const rows = buildDeviceReadiness(data.devices||[], data.yealinkServerDevices||[], firmwareRefs)
+    return (data.devices||[]).length ? rows.filter(row=>row.inMigration) : rows
+  }, [data.devices, data.yealinkServerDevices, firmwareRefs])
+  const readinessCounts = useMemo(() => readiness.reduce((counts,row)=>{
+    counts[row.status] = (counts[row.status]||0)+1
+    return counts
+  },{}), [readiness])
+
+  function set(field, value) {
+    onChange({ ...data, research:{ ...research, [field]:value } })
+  }
+  function setChecks(checks) {
+    onChange({ ...data, research:{ ...research, checks } })
+  }
+
+  return (
+    <div className="mig-step-body">
+      <p className="mig-step-desc">Confirm the customer is a good migration candidate and capture everything required to reproduce the current programming.</p>
+
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Customer and scope</div>
+        <div className="mig-field-row">
+          <Field label="Primary contact"><MInput value={research.contact||''} onChange={v=>set('contact',v)} placeholder="Name, phone, email"/></Field>
+          <Field label="Sites"><MInput value={research.sites||''} onChange={v=>set('sites',v)} placeholder="Main office + remote sites"/></Field>
+          <Field label="Target migration date"><MInput type="date" value={research.targetDate||''} onChange={v=>set('targetDate',v)}/></Field>
+          <Field label="Current system"><MInput value={research.currentSystem||'Meta'} onChange={v=>set('currentSystem',v)} placeholder="Meta"/></Field>
+        </div>
+        <Field label="Scope to reproduce">
+          <MTextarea value={research.scope||''} onChange={v=>set('scope',v)} placeholder="Users, numbers, call routing, schedules, groups, special keys, integrations…"/>
+        </Field>
+        <div className="mig-field-row">
+          <Field label="Porting status"><MInput value={research.portingStatus||''} onChange={v=>set('portingStatus',v)} placeholder="CSR received / LOA pending / FOC…"/></Field>
+          <Field label="Risks and dependencies"><MInput value={research.risks||''} onChange={v=>set('risks',v)} placeholder="Network work, analog lines, deadlines…"/></Field>
+        </div>
+      </div>
+
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Research checklist</div>
+        <ChecklistPanel items={RESEARCH_CHECKS} values={research.checks||{}} onChange={setChecks}/>
+      </div>
+
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Device and firmware readiness</div>
+        {firmwareLoading ? (
+          <p className="mig-hint">Loading Firmware References…</p>
+        ) : readiness.length === 0 ? (
+          <p className="mig-hint">Add the Managed Devices or optional Yealink server CSV in Data Collection to populate this matrix.</p>
+        ) : (
+          <>
+            <div className="mig-audit-summary">
+              {[
+                ['ready','Ready'],
+                ['mismatch','Update'],
+                ['eol','EOL'],
+                ['unknownModel','Unknown model'],
+                ['versionMissing','Version missing'],
+                ['uncertified','No target'],
+              ].map(([key,label])=>(
+                <div key={key} className={`mig-audit-count is-${key}`}>
+                  <strong>{readinessCounts[key]||0}</strong><span>{label}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mig-table-wrap">
+              <table className="mns-table mig-readiness-table">
+                <thead><tr><th>Model</th><th>MAC</th><th>Reported firmware</th><th>Certified target</th><th>Finding</th></tr></thead>
+                <tbody>
+                  {readiness.map(row=>(
+                    <tr key={row.mac} className={`mig-readiness-row is-${row.status}`}>
+                      <td>{row.model||'Unknown'}</td>
+                      <td className="mns-td-mono">{row.mac}</td>
+                      <td>{row.firmwareVersion||'—'}</td>
+                      <td>{row.certifiedVersion||'—'}</td>
+                      <td>{row.finding}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Feasibility decision</div>
+        <div className="mig-field-row">
+          <Field label="Migration candidate">
+            <MSelect value={research.feasibility||''} onChange={v=>set('feasibility',v)} options={[
+              {value:'',label:'Select decision…'},
+              {value:'good',label:'Good candidate'},
+              {value:'conditional',label:'Conditional — planning actions required'},
+              {value:'not-ready',label:'Not ready'},
+            ]}/>
+          </Field>
+          <Field label="Decision rationale">
+            <MTextarea value={research.rationale||''} onChange={v=>set('rationale',v)} rows={2} placeholder="Why this customer is or is not ready"/>
+          </Field>
+        </div>
+        <Field label="Research notes"><MTextarea value={research.notes||''} onChange={v=>set('notes',v)} placeholder="Additional findings"/></Field>
+      </div>
+    </div>
+  )
+}
+
+/* ════════════════════════════════════════════════════════════
+   LIFECYCLE — Planning
+   ════════════════════════════════════════════════════════════ */
+function StepPlanning({ data, onChange }) {
+  const planning = data.planning || {}
+  const researchDone = checklistComplete(RESEARCH_CHECKS, data.research?.checks) && Boolean(data.research?.feasibility)
+  function set(field,value) { onChange({ ...data, planning:{ ...planning, [field]:value } }) }
+  function setChecks(checks) { onChange({ ...data, planning:{ ...planning, checks } }) }
+  return (
+    <div className="mig-step-body">
+      <PhaseWarning>{!researchDone ? 'Research is incomplete. You can plan now, but resolve research findings before approving cutover.' : ''}</PhaseWarning>
+      <p className="mig-step-desc">Turn research findings into an owned firmware, replacement, network, and cutover plan.</p>
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Plan ownership</div>
+        <div className="mig-field-row">
+          <Field label="Migration owner"><MInput value={planning.owner||''} onChange={v=>set('owner',v)} placeholder="Technician / project owner"/></Field>
+          <Field label="Cutover window"><MInput value={planning.cutoverWindow||''} onChange={v=>set('cutoverWindow',v)} placeholder="Date, start time, duration"/></Field>
+        </div>
+      </div>
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Remediation and cutover plan</div>
+        <Field label="Firmware update plan"><MTextarea value={planning.firmwarePlan||''} onChange={v=>set('firmwarePlan',v)} placeholder="Models/counts, current → target, pilot phone, method, maintenance window, rollback"/></Field>
+        <Field label="End-of-life replacement plan"><MTextarea value={planning.replacementPlan||''} onChange={v=>set('replacementPlan',v)} placeholder="Models/counts, replacements, procurement owner and due date"/></Field>
+        <Field label="Customer network instructions"><MTextarea value={planning.networkPlan||''} onChange={v=>set('networkPlan',v)} placeholder="QoS, firewall, VLAN, cabling, responsible party, due date"/></Field>
+        <Field label="Rollback plan"><MTextarea value={planning.rollbackPlan||''} onChange={v=>set('rollbackPlan',v)} placeholder="Trigger, decision owner, steps, rollback deadline"/></Field>
+        <Field label="Dependencies"><MTextarea value={planning.dependencies||''} onChange={v=>set('dependencies',v)} placeholder="Porting, ISP, hardware arrival, customer availability…"/></Field>
+      </div>
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Planning checklist</div>
+        <ChecklistPanel items={PLANNING_CHECKS} values={planning.checks||{}} onChange={setChecks}/>
+      </div>
+      <Field label="Planning notes"><MTextarea value={planning.notes||''} onChange={v=>set('notes',v)} placeholder="Approvals, exceptions, and decisions"/></Field>
     </div>
   )
 }
@@ -582,13 +800,30 @@ function StepUsers({ data, onChange }) {
    ════════════════════════════════════════════════════════════ */
 function StepDevices({ data, onChange }) {
   const [importLog, setImportLog] = useState([])
+  const [auditImportLog, setAuditImportLog] = useState([])
 
   // Only explicitly entered extensions may be assigned to devices.
   const extByDN = useMemo(() => extensionsByDn(data.users), [data.users])
-  const { duplicateExtensions, deviceCounts } = useMemo(
+  const { duplicateExtensions, deviceCounts, approvalKeys } = useMemo(
     () => analyzeDeviceExtensionAssignments(data.devices, extByDN),
     [data.devices, extByDN],
   )
+  const approvedSharedExtensions = useMemo(() => new Set(
+    [...duplicateExtensions].filter(ext =>
+      (data.sharedDeviceApprovals||[]).includes(approvalKeys[ext])),
+  ), [duplicateExtensions, approvalKeys, data.sharedDeviceApprovals])
+  const unresolvedSharedExtensions = useMemo(() => new Set(
+    [...duplicateExtensions].filter(ext => !approvedSharedExtensions.has(ext)),
+  ), [duplicateExtensions, approvedSharedExtensions])
+  const auditRows = useMemo(
+    () => buildYealinkServerAudit(data.yealinkServerDevices || [], data.devices || []),
+    [data.yealinkServerDevices, data.devices],
+  )
+  const auditExceptions = useMemo(() => yealinkAuditExceptions(auditRows), [auditRows])
+  const auditCounts = useMemo(() => auditRows.reduce((counts, row) => {
+    counts[row.category] = (counts[row.category] || 0) + 1
+    return counts
+  }, {}), [auditRows])
 
   function handleCSV(rows, filename) {
     const type = detectType(rows)
@@ -606,6 +841,51 @@ function StepDevices({ data, onChange }) {
     }).filter(Boolean)
     onChange({ ...data, devices })
     setImportLog(l=>[...l.slice(-2), `${devices.length} devices imported from "${filename}"`])
+  }
+
+  function handleYealinkCSV(rows, filename) {
+    const type = detectType(rows)
+    if (type !== 'yealink-server') {
+      setAuditImportLog([`"${filename}" — not a Yealink server phone export`])
+      return
+    }
+    const yealinkServerDevices = rows
+      .map(row => yealinkServerDeviceFromRow(row, { id:makeId() }))
+      .filter(Boolean)
+    onChange({ ...data, yealinkServerDevices, yealinkAuditFileName:filename })
+    setAuditImportLog([`${yealinkServerDevices.length} server devices loaded from "${filename}"`])
+  }
+
+  function clearYealinkAudit() {
+    onChange({ ...data, yealinkServerDevices:[], yealinkAuditFileName:'' })
+    setAuditImportLog([])
+  }
+
+  function setSharedExtensionApproved(extension, approved) {
+    const prefix = `${normalizeMigrationExtension(extension)}|`
+    const next = (data.sharedDeviceApprovals||[]).filter(key => !key.startsWith(prefix))
+    if (approved && approvalKeys[extension]) next.push(approvalKeys[extension])
+    onChange({ ...data, sharedDeviceApprovals:next })
+  }
+
+  function downloadAuditChecklist() {
+    const columns = [
+      'Category','MAC','Model','Device Status','Last Report','SIP Accounts',
+      'In Migration','Duplicate Accounts','Recommended Action',
+    ]
+    const rows = auditExceptions.map(row => ({
+      'Category':row.categoryLabel,
+      'MAC':row.mac,
+      'Model':row.model,
+      'Device Status':row.status,
+      'Last Report':row.lastReport,
+      'SIP Accounts':(row.accounts||[]).map(a=>a.info).join('; '),
+      'In Migration':row.inMigration?'yes':'no',
+      'Duplicate Accounts':(row.duplicateAccounts||[]).join('; '),
+      'Recommended Action':row.action,
+    }))
+    const domain = data.domain || 'migration'
+    downloadCSV(`yealink_server_review_${domain}.csv`, toCSV(columns, rows))
   }
 
   function updateDevice(id, f, v) { onChange({ ...data, devices:data.devices.map(d=>d.id===id?{...d,[f]:v}:d) }) }
@@ -634,18 +914,43 @@ function StepDevices({ data, onChange }) {
         <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
           Devices
           <span className="mig-count-badge">{(data.devices||[]).length}</span>
-          {duplicateExtensions.size > 0 && (
+          {unresolvedSharedExtensions.size > 0 && (
             <span className="mig-warn-badge">
-              {duplicateExtensions.size} shared extension{duplicateExtensions.size>1?'s':''}
+              {unresolvedSharedExtensions.size} shared extension{unresolvedSharedExtensions.size>1?'s':''} to review
             </span>
           )}
+          {approvedSharedExtensions.size > 0 && (
+            <span className="mig-ok-badge">{approvedSharedExtensions.size} approved</span>
+          )}
         </div>
-        {duplicateExtensions.size > 0 && (
+        {unresolvedSharedExtensions.size > 0 && (
           <div className="mns-error" style={{marginBottom:10}}>
-            {[...duplicateExtensions].map(ext => (
-              <div key={ext}>
-                Extension {ext} is assigned to {deviceCounts[ext]} devices.
+            {[...unresolvedSharedExtensions].map(ext => (
+              <div key={ext} className="mig-shared-review-row">
+                <span>Extension {ext} is assigned to {deviceCounts[ext]} devices.</span>
+                <label className="mig-shared-check">
+                  <input
+                    type="checkbox"
+                    checked={false}
+                    onChange={event=>setSharedExtensionApproved(ext,event.target.checked)}
+                  />
+                  Expected — user has multiple active phones
+                </label>
               </div>
+            ))}
+          </div>
+        )}
+        {approvedSharedExtensions.size > 0 && (
+          <div className="mig-shared-approved" style={{marginBottom:10}}>
+            {[...approvedSharedExtensions].map(ext => (
+              <label key={ext} className="mig-shared-check">
+                <input
+                  type="checkbox"
+                  checked
+                  onChange={event=>setSharedExtensionApproved(ext,event.target.checked)}
+                />
+                Extension {ext} approved on {deviceCounts[ext]} active phones
+              </label>
             ))}
           </div>
         )}
@@ -658,7 +963,7 @@ function StepDevices({ data, onChange }) {
                   const autoExt = d.dn ? extByDN[d.dn] || '' : ''
                   const l1 = d.line1 || autoExt
                   const l2 = data.line2 ? (d.line2 || l1) : d.line2
-                  const sharedExtension = duplicateExtensions.has(normalizeMigrationExtension(l1))
+                  const sharedExtension = unresolvedSharedExtensions.has(normalizeMigrationExtension(l1))
                   return (
                     <tr key={d.id} className={sharedExtension?'mns-row-collision':''}>
                       <td><input className="mig-cell-input mig-cell-mono" value={d.mac} onChange={e=>updateDevice(d.id,'mac',e.target.value)} placeholder="aabbccddeeff"/></td>
@@ -678,6 +983,95 @@ function StepDevices({ data, onChange }) {
           </div>
         )}
         <button type="button" className="btn btn-secondary" style={{marginTop:data.devices?.length?8:0}} onClick={addDevice}>+ Add device</button>
+      </div>
+
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Yealink Server Audit <span className="mig-optional-label">Optional</span></div>
+        <p className="mig-hint">
+          Compare the Yealink server inventory to this migration by MAC address. This is review-only and never deletes a server device.
+        </p>
+        <div className="mns-slots">
+          <UploadSlot
+            label="Yealink Phone List CSV"
+            hint="MAC + Device Status + Last Report Time"
+            loaded={(data.yealinkServerDevices||[]).length>0}
+            count={(data.yealinkServerDevices||[]).length}
+            onFile={(rows,name)=>handleYealinkCSV(rows,name)}
+          />
+        </div>
+        {auditImportLog.length > 0 && (
+          <div className="mns-detect-log" style={{marginTop:8}}>
+            {auditImportLog.map((message,index)=><span key={index} className="mns-detect-chip">✓ {message}</span>)}
+          </div>
+        )}
+
+        {auditRows.length > 0 && (
+          <div className="mig-audit-results">
+            <div className="mig-audit-summary" aria-label="Yealink audit summary">
+              {[
+                ['ready','Ready'],
+                ['verify','Verify'],
+                ['investigate','Investigate'],
+                ['cleanup','Cleanup'],
+                ['strongCleanup','Strong cleanup'],
+              ].map(([key,label]) => (
+                <div key={key} className={`mig-audit-count is-${key}`}>
+                  <strong>{auditCounts[key]||0}</strong>
+                  <span>{label}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="mig-audit-actions">
+              <span className="mig-hint">
+                {auditExceptions.length} device{auditExceptions.length===1?'':'s'} need review
+                {data.yealinkAuditFileName ? ` · ${data.yealinkAuditFileName}` : ''}
+              </span>
+              <button type="button" className="btn btn-primary" onClick={downloadAuditChecklist} disabled={!auditExceptions.length}>
+                Download review checklist
+              </button>
+              <button type="button" className="btn btn-secondary" onClick={clearYealinkAudit}>
+                Clear audit
+              </button>
+            </div>
+
+            <div className="mig-table-wrap">
+              <table className="mns-table mig-audit-table">
+                <thead>
+                  <tr>
+                    <th>Recommendation</th><th>MAC</th><th>Model</th><th>Status</th>
+                    <th>Last report</th><th>SIP account(s)</th><th>Migration</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditRows.map(row => (
+                    <tr key={row.id||row.mac} className={`mig-audit-row is-${row.category}`}>
+                      <td>
+                        <span className={`mig-audit-status is-${row.category}`}>{row.categoryLabel}</span>
+                        <div className="mig-audit-action">{row.action}</div>
+                        {row.duplicateAccounts?.length > 0 && (
+                          <div className="mig-audit-duplicate">
+                            Duplicate SIP account: {row.duplicateAccounts.join(', ')}
+                          </div>
+                        )}
+                      </td>
+                      <td className="mns-td-mono">{row.mac}</td>
+                      <td>{row.model||'—'}</td>
+                      <td>{row.status||'unknown'}</td>
+                      <td>{row.lastReport||'—'}</td>
+                      <td>
+                        {(row.accounts||[]).length
+                          ? row.accounts.map(a=>`${a.info}${a.status?` (${a.status})`:''}`).join(', ')
+                          : 'None'}
+                      </td>
+                      <td>{row.inMigration?'Included':'Not included'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -954,10 +1348,89 @@ function StepSystem({ data, onChange }) {
   )
 }
 
+function StepRPP({ data, onChange }) {
+  const rpp = data.rpp || {}
+  const numberComparison = compareMigrationNumberLists(rpp.expectedNumbers,rpp.resultingNumbers)
+  const expectedCount = numberComparison.expected.length
+  const resultingCount = numberComparison.resulting.length
+  function set(field,value) { onChange({ ...data, rpp:{ ...rpp, [field]:value } }) }
+  function setChecks(checks) { onChange({ ...data, rpp:{ ...rpp, checks } }) }
+  return (
+    <div className="mig-sys-panel">
+      <p className="mig-hint">Complete this work manually in RPP. ClearLine records confirmation only and does not connect to or change RPP.</p>
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">RPP account</div>
+        <div className="mig-field-row">
+          <Field label="RPP customer / account ID"><MInput value={rpp.accountId||''} onChange={v=>set('accountId',v)} placeholder="Customer or account identifier"/></Field>
+          <Field label="Target platform"><MInput value={rpp.targetPlatform||'NetSapiens'} onChange={v=>set('targetPlatform',v)} placeholder="NetSapiens"/></Field>
+          <Field label="Technician"><MInput value={rpp.technician||''} onChange={v=>set('technician',v)} placeholder="Completed by"/></Field>
+          <Field label="Completed at"><MInput type="datetime-local" value={rpp.completedAt||''} onChange={v=>set('completedAt',v)}/></Field>
+        </div>
+      </div>
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Account and number push</div>
+        <div className="mig-field-row">
+          <Field label={`Expected numbers${expectedCount?` (${expectedCount})`:''}`}>
+            <MTextarea value={rpp.expectedNumbers||''} onChange={v=>set('expectedNumbers',v)} placeholder="One number per line or comma-separated"/>
+          </Field>
+          <Field label={`Numbers on target platform${resultingCount?` (${resultingCount})`:''}`}>
+            <MTextarea value={rpp.resultingNumbers||''} onChange={v=>set('resultingNumbers',v)} placeholder="Paste the resulting target-platform number list"/>
+          </Field>
+        </div>
+        {expectedCount > 0 && resultingCount > 0 && !numberComparison.matches && (
+          <div className="mns-error">
+            <div>RPP number verification does not match.</div>
+            {numberComparison.missing.length > 0 && <div>Missing: {numberComparison.missing.join(', ')}</div>}
+            {numberComparison.unexpected.length > 0 && <div>Unexpected: {numberComparison.unexpected.join(', ')}</div>}
+          </div>
+        )}
+        {numberComparison.matches && (
+          <div className="parse-note parse-ok">All {expectedCount} expected numbers are present on the target platform.</div>
+        )}
+        <ChecklistPanel items={RPP_CHECKS} values={rpp.checks||{}} onChange={setChecks}/>
+      </div>
+      <div className="mig-field-row">
+        <Field label="Exceptions"><MTextarea value={rpp.exceptions||''} onChange={v=>set('exceptions',v)} placeholder="Numbers held back, rejected, or requiring support"/></Field>
+        <Field label="RPP notes"><MTextarea value={rpp.notes||''} onChange={v=>set('notes',v)} placeholder="Ticket numbers and verification details"/></Field>
+      </div>
+    </div>
+  )
+}
+
+function StepDataCollection({ data, onChange }) {
+  const [section,setSection] = useState('account')
+  const planningDone = checklistComplete(PLANNING_CHECKS, data.planning?.checks)
+  const sections = [
+    { id:'account', label:'Account Setup' },
+    { id:'users', label:'Users', count:(data.users||[]).length },
+    { id:'devices', label:'Devices', count:(data.devices||[]).length },
+    { id:'system', label:'System Config' },
+    { id:'rpp', label:'RPP Account & Numbers' },
+  ]
+  return (
+    <div className="mig-data-collection">
+      <PhaseWarning>{!planningDone ? 'Planning is incomplete. Data collection may continue, but resolve planning actions before Programming.' : ''}</PhaseWarning>
+      <div className="mig-sys-tabs mig-collection-tabs">
+        {sections.map(item=>(
+          <button key={item.id} type="button" className={`mig-sys-tab${section===item.id?' is-active':''}`} onClick={()=>setSection(item.id)}>
+            {item.label}
+            {item.count > 0 && <span className="mig-count-badge" style={{marginLeft:6}}>{item.count}</span>}
+          </button>
+        ))}
+      </div>
+      {section==='account' && <StepAccount data={data} onChange={onChange}/>}
+      {section==='users' && <StepUsers data={data} onChange={onChange}/>}
+      {section==='devices' && <StepDevices data={data} onChange={onChange}/>}
+      {section==='system' && <StepSystem data={data} onChange={onChange}/>}
+      {section==='rpp' && <div className="mig-step-body"><StepRPP data={data} onChange={onChange}/></div>}
+    </div>
+  )
+}
+
 /* ════════════════════════════════════════════════════════════
-   STEP 5 — Build
+   LIFECYCLE — Programming
    ════════════════════════════════════════════════════════════ */
-function StepBuild({ data, onChange, jobId }) {
+function StepProgramming({ data, onChange, jobId }) {
   const [syncState, setSyncState] = useState(null) // null | 'syncing' | 'done' | 'no-account' | 'error'
 
   function toggleDone(key) {
@@ -1042,9 +1515,17 @@ function StepBuild({ data, onChange, jobId }) {
 
   const manualItems = (data.autoAttendants||[]).length + (data.callFlows||[]).length +
     (data.huntGroups||[]).length + (data.buttonLayouts||[]).length
-  const totalItems = 3 + manualItems + 6  // 3 imports + manual + 6 post-tests
-  const doneCount  = Object.values(b).filter(Boolean).length
+  const programmingKeys = [
+    'usersImported','phonesImported','e911Imported',
+    ...(data.autoAttendants||[]).map(item=>`aa_${item.id}`),
+    ...(data.callFlows||[]).map(item=>`cf_${item.id}`),
+    ...(data.huntGroups||[]).map(item=>`hg_${item.id}`),
+    ...(data.buttonLayouts||[]).map(item=>`bl_${item.id}`),
+  ]
+  const totalItems = 3 + manualItems
+  const doneCount = programmingKeys.filter(key=>b[key]).length
   const pct = Math.round((doneCount / Math.max(totalItems,1)) * 100)
+  const rppReady = checklistComplete(RPP_CHECKS, data.rpp?.checks)
 
   function CheckRow({ bkey, label, detail }) {
     const done = !!b[bkey]
@@ -1068,6 +1549,7 @@ function StepBuild({ data, onChange, jobId }) {
 
   return (
     <div className="mig-step-body">
+      <PhaseWarning>{!rppReady ? 'RPP account/number work is incomplete. Confirm the destination account and numbers before loading imports.' : ''}</PhaseWarning>
       {/* Progress */}
       <div className="mig-build-progress">
         <div className="mig-progress-bar-wrap">
@@ -1162,17 +1644,105 @@ function StepBuild({ data, onChange, jobId }) {
           })}
         </div>
       )}
+    </div>
+  )
+}
 
-      {/* Post-migration tests */}
+function StepInstall({ data, onChange }) {
+  const install = data.install || {}
+  const phases = migrationPhaseCompletion(data)
+  function set(field,value) { onChange({ ...data, install:{ ...install, [field]:value } }) }
+  function setChecks(checks) { onChange({ ...data, install:{ ...install, checks } }) }
+  return (
+    <div className="mig-step-body">
+      <PhaseWarning>{!phases.programming ? 'Programming is not complete. Install can be prepared, but do not cut over until imports and manual programming are verified.' : ''}</PhaseWarning>
+      <p className="mig-step-desc">Stage equipment, complete network and firmware work, deploy phones, and preserve rollback during cutover.</p>
       <div className="mig-field-group">
-        <div className="mig-field-group-title">Post-Migration Tests</div>
-        <CheckRow bkey="test_main"  label="Main number rings correctly"/>
-        <CheckRow bkey="test_aa"    label="Auto attendant keys route correctly"/>
-        <CheckRow bkey="test_hg"    label="Hunt groups ring all members"/>
-        <CheckRow bkey="test_vm"    label="Voicemail accessible (*97 or *98)"/>
-        <CheckRow bkey="test_night" label="Night mode / after-hours toggles correctly"/>
-        <CheckRow bkey="test_e911"  label="E911 address confirmed with customer"/>
+        <div className="mig-field-group-title">Install checklist</div>
+        <ChecklistPanel items={INSTALL_CHECKS} values={install.checks||{}} onChange={setChecks}/>
       </div>
+      <Field label="Install notes"><MTextarea value={install.notes||''} onChange={v=>set('notes',v)} placeholder="Arrival times, replacements, cabling, registration exceptions, rollback events…"/></Field>
+    </div>
+  )
+}
+
+function StepQC({ data, onChange }) {
+  const phases = migrationPhaseCompletion(data)
+  function setChecks(checks) { onChange({ ...data, build:{ ...(data.build||{}), ...checks } }) }
+  const qcValues = Object.fromEntries(QC_CHECKS.map(item=>[item.key,Boolean(data.build?.[item.key])]))
+  return (
+    <div className="mig-step-body">
+      <PhaseWarning>{!phases.install ? 'Install is incomplete. QC results may be recorded, but complete installation before customer acceptance.' : ''}</PhaseWarning>
+      <p className="mig-step-desc">Prove call routing, features, emergency information, and device registration before customer acceptance.</p>
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Quality control</div>
+        <ChecklistPanel items={QC_CHECKS} values={qcValues} onChange={setChecks}/>
+      </div>
+    </div>
+  )
+}
+
+function StepFollowup({ data, onChange }) {
+  const followup = data.followup || {}
+  const phases = migrationPhaseCompletion(data)
+  function set(field,value) { onChange({ ...data, followup:{ ...followup, [field]:value } }) }
+  function setChecks(checks) { onChange({ ...data, followup:{ ...followup, checks } }) }
+  return (
+    <div className="mig-step-body">
+      <PhaseWarning>{!phases.qc ? 'QC is incomplete. Follow-up can be documented, but Meta decommission will remain blocked.' : ''}</PhaseWarning>
+      <p className="mig-step-desc">Close issues, train the customer, deliver updated instructions, and record production acceptance.</p>
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Follow-up</div>
+        <div className="mig-field-row">
+          <Field label="Follow-up date"><MInput type="date" value={followup.followupDate||''} onChange={v=>set('followupDate',v)}/></Field>
+          <Field label="Customer approval by"><MInput value={followup.approvedBy||''} onChange={v=>set('approvedBy',v)} placeholder="Name / title"/></Field>
+        </div>
+        <ChecklistPanel items={FOLLOWUP_CHECKS} values={followup.checks||{}} onChange={setChecks}/>
+        <label className="mns-checkline mig-customer-approval">
+          <input type="checkbox" checked={!!followup.customerApproved} onChange={event=>set('customerApproved',event.target.checked)}/>
+          Customer approved final decommission of the old Meta system
+        </label>
+      </div>
+      <div className="mig-field-row">
+        <Field label="Open issues"><MTextarea value={followup.openIssues||''} onChange={v=>set('openIssues',v)} placeholder="Owner, due date, workaround, ticket"/></Field>
+        <Field label="Follow-up notes"><MTextarea value={followup.notes||''} onChange={v=>set('notes',v)} placeholder="Training, documentation, and customer feedback"/></Field>
+      </div>
+    </div>
+  )
+}
+
+function StepDecommission({ data, onChange }) {
+  const decommission = data.decommission || {}
+  const phases = migrationPhaseCompletion(data)
+  const eligible = canCompleteMetaDecommission(data)
+  const disabledKeys = new Set(eligible ? [] : ['oldSystemRemoved'])
+
+  function set(field,value) { onChange({ ...data, decommission:{ ...decommission, [field]:value } }) }
+  function setChecks(checks) {
+    let next = checks
+    const candidate = { ...data, decommission:{ ...decommission, checks:next } }
+    if (!canCompleteMetaDecommission(candidate) && next.oldSystemRemoved) {
+      next = { ...next, oldSystemRemoved:false }
+    }
+    onChange({ ...data, decommission:{ ...decommission, checks:next } })
+  }
+
+  return (
+    <div className="mig-step-body">
+      <PhaseWarning>{!phases.followup ? 'Follow-up and customer approval are incomplete. The final Meta removal confirmation is locked.' : ''}</PhaseWarning>
+      <p className="mig-step-desc">Safely retire the old Meta system after production stability, rollback expiration, and customer approval. ClearLine records the work but does not delete anything from Meta.</p>
+      <div className="mig-field-group mig-decommission-group">
+        <div className="mig-field-group-title">Meta decommission safety gate</div>
+        <ChecklistPanel items={DECOMMISSION_CHECKS} values={decommission.checks||{}} onChange={setChecks} disabledKeys={disabledKeys}/>
+        {!eligible && (
+          <p className="mig-hint">Complete the first six safety checks and record customer approval in Follow-up to unlock “Old system removed from Meta.”</p>
+        )}
+      </div>
+      <div className="mig-field-row">
+        <Field label="Completed by"><MInput value={decommission.completedBy||''} onChange={v=>set('completedBy',v)} placeholder="Technician"/></Field>
+        <Field label="Completed at"><MInput type="datetime-local" value={decommission.completedAt||''} onChange={v=>set('completedAt',v)}/></Field>
+      </div>
+      <Field label="Decommission notes"><MTextarea value={decommission.notes||''} onChange={v=>set('notes',v)} placeholder="Meta ticket, archived files, removed users/devices, license changes, exceptions"/></Field>
     </div>
   )
 }
@@ -1181,21 +1751,24 @@ function StepBuild({ data, onChange, jobId }) {
    STEP INDICATOR
    ════════════════════════════════════════════════════════════ */
 const STEPS = [
-  { id:0, label:'Account Setup' },
-  { id:1, label:'Users'         },
-  { id:2, label:'Devices'       },
-  { id:3, label:'System Config' },
-  { id:4, label:'Build'         },
+  { id:0, key:'research', label:'Research' },
+  { id:1, key:'planning', label:'Planning' },
+  { id:2, key:'collection', label:'Data Collection' },
+  { id:3, key:'programming', label:'Programming' },
+  { id:4, key:'install', label:'Install' },
+  { id:5, key:'qc', label:'QC' },
+  { id:6, key:'followup', label:'Follow-up' },
+  { id:7, key:'decommission', label:'Meta Decommission' },
 ]
 
-function StepIndicator({ current, onGoto }) {
+function StepIndicator({ current, onGoto, completion }) {
   return (
     <div className="mig-wizard-steps no-print">
       {STEPS.map((s, i) => (
         <button key={s.id} type="button"
-          className={`mig-wizard-step${current===s.id?' is-active':current>s.id?' is-done':''}`}
+          className={`mig-wizard-step${current===s.id?' is-active':''}${completion[s.key]?' is-done':''}`}
           onClick={()=>onGoto(s.id)}>
-          <span className="mig-wizard-num">{current>s.id?'✓':s.id+1}</span>
+          <span className="mig-wizard-num">{completion[s.key]?'✓':s.id+1}</span>
           <span className="mig-wizard-label">{s.label}</span>
           {i < STEPS.length-1 && <span className="mig-wizard-connector"/>}
         </button>
@@ -1225,12 +1798,16 @@ export default function MigrationWorkspace({ jobId }) {
 
   useEffect(() => () => clearTimeout(saveTimer.current), [])
 
+  const completion = useMemo(() => migrationPhaseCompletion(data), [data])
   const STEP_COMPONENTS = [
-    <StepAccount  key="account"  data={data} onChange={handleChange}/>,
-    <StepUsers    key="users"    data={data} onChange={handleChange}/>,
-    <StepDevices  key="devices"  data={data} onChange={handleChange}/>,
-    <StepSystem   key="system"   data={data} onChange={handleChange}/>,
-    <StepBuild    key="build"    data={data} onChange={handleChange} jobId={jobId}/>,
+    <StepResearch key="research" data={data} onChange={handleChange}/>,
+    <StepPlanning key="planning" data={data} onChange={handleChange}/>,
+    <StepDataCollection key="collection" data={data} onChange={handleChange}/>,
+    <StepProgramming key="programming" data={data} onChange={handleChange} jobId={jobId}/>,
+    <StepInstall key="install" data={data} onChange={handleChange}/>,
+    <StepQC key="qc" data={data} onChange={handleChange}/>,
+    <StepFollowup key="followup" data={data} onChange={handleChange}/>,
+    <StepDecommission key="decommission" data={data} onChange={handleChange}/>,
   ]
 
   return (
@@ -1238,11 +1815,11 @@ export default function MigrationWorkspace({ jobId }) {
       <div className="design-hero hero-grid" style={{marginBottom:16}}>
         <div>
           <div className="survey-kicker">Migration</div>
-          <h1>MCU → NetSapiens</h1>
+          <h1>Meta → {data.rpp?.targetPlatform||'NetSapiens'}</h1>
         </div>
       </div>
 
-      <StepIndicator current={step} onGoto={setStep}/>
+      <StepIndicator current={step} onGoto={setStep} completion={completion}/>
 
       <div className="mig-wizard-body">
         {STEP_COMPONENTS[step]}
@@ -1255,7 +1832,7 @@ export default function MigrationWorkspace({ jobId }) {
         </button>
         <span className="mig-wizard-page">{step+1} of {STEPS.length}</span>
         <button type="button" className="btn btn-primary" disabled={step===STEPS.length-1} onClick={()=>setStep(s=>s+1)}>
-          {step===STEPS.length-2 ? 'Go to Build →' : 'Next →'}
+          {step===STEPS.length-2 ? 'Go to Decommission →' : `Next: ${STEPS[step+1]?.label||''} →`}
         </button>
       </div>
     </div>

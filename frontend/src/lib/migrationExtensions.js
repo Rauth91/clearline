@@ -63,6 +63,10 @@ export function normalizeMigrationExtension(value) {
   return String(value ?? '').replace(/\D/g, '').slice(0, 8)
 }
 
+export function normalizeMigrationMac(value) {
+  return String(value ?? '').replace(/[^0-9A-Fa-f]/g, '').toLowerCase()
+}
+
 export function analyzeMigrationExtensions(users = []) {
   const missingIds = new Set()
   const byExtension = new Map()
@@ -106,7 +110,7 @@ export function analyzeDeviceExtensionAssignments(devices = [], extByDn = {}) {
     )
     if (!extension) continue
 
-    const mac = String(device.mac ?? '').replace(/[^0-9A-Fa-f]/g, '').toLowerCase()
+    const mac = normalizeMigrationMac(device.mac)
     const deviceKey = mac || String(device.id ?? '')
     if (!deviceKey) continue
 
@@ -117,12 +121,125 @@ export function analyzeDeviceExtensionAssignments(devices = [], extByDn = {}) {
 
   const duplicateExtensions = new Set()
   const deviceCounts = {}
+  const approvalKeys = {}
   for (const [extension, deviceKeys] of devicesByExtension) {
     deviceCounts[extension] = deviceKeys.size
-    if (deviceKeys.size > 1) duplicateExtensions.add(extension)
+    if (deviceKeys.size > 1) {
+      duplicateExtensions.add(extension)
+      approvalKeys[extension] = sharedExtensionApprovalKey(extension, [...deviceKeys])
+    }
   }
 
-  return { duplicateExtensions, deviceCounts }
+  return { duplicateExtensions, deviceCounts, approvalKeys }
+}
+
+export function sharedExtensionApprovalKey(extension, deviceKeys = []) {
+  const ext = normalizeMigrationExtension(extension)
+  const keys = [...new Set(deviceKeys.map(String))].sort()
+  return `${ext}|${keys.join(',')}`
+}
+
+export const YEALINK_AUDIT_LABELS = {
+  ready:'Ready',
+  verify:'Verify before cutover',
+  investigate:'Investigate missing device',
+  cleanup:'Cleanup candidate',
+  strongCleanup:'Strong cleanup candidate',
+}
+
+export function yealinkServerDeviceFromRow(row, { id } = {}) {
+  const mac = normalizeMigrationMac(row?.MAC)
+  if (!mac) return null
+
+  const accounts = [1, 2].map(index => ({
+    type:cleanImportedField(row?.[`Account Type ${index}`]),
+    info:cleanImportedField(row?.[`Account Info ${index}`]),
+    status:cleanImportedField(row?.[`Account Status ${index}`]).toLowerCase(),
+  })).filter(account => account.info)
+
+  return {
+    id,
+    mac,
+    serial:cleanImportedField(row?.['Machine ID(Serial Number)']),
+    model:cleanImportedField(row?.Model),
+    deviceName:cleanImportedField(row?.['Device Name']),
+    site:cleanImportedField(row?.Site),
+    status:cleanImportedField(row?.['Device Status']).toLowerCase(),
+    validStatus:cleanImportedField(row?.['Valid Status']).toLowerCase(),
+    lastReport:cleanImportedField(row?.['Last Report Time']),
+    firmwareVersion:cleanImportedField(row?.['Firmware Version']),
+    accounts,
+  }
+}
+
+function normalizedAccount(value) {
+  return cleanImportedField(value).replace(/\s+/g, '').toLowerCase()
+}
+
+export function buildYealinkServerAudit(serverDevices = [], migrationDevices = []) {
+  const migrationMacs = new Set(
+    migrationDevices.map(device => normalizeMigrationMac(device.mac)).filter(Boolean),
+  )
+  const accountMacs = new Map()
+
+  for (const device of serverDevices) {
+    const mac = normalizeMigrationMac(device.mac)
+    for (const account of device.accounts || []) {
+      const key = normalizedAccount(account.info)
+      if (!key || !mac) continue
+      const macs = accountMacs.get(key) || new Set()
+      macs.add(mac)
+      accountMacs.set(key, macs)
+    }
+  }
+
+  return serverDevices.map(device => {
+    const mac = normalizeMigrationMac(device.mac)
+    const inMigration = migrationMacs.has(mac)
+    const online = String(device.status || '').toLowerCase() === 'online'
+    const offline = String(device.status || '').toLowerCase() === 'offline'
+    const hasAccount = (device.accounts || []).some(account => normalizedAccount(account.info))
+
+    let category
+    let action
+    if (inMigration && online) {
+      category = 'ready'
+      action = 'Keep — present in the migration and online.'
+    } else if (inMigration) {
+      category = 'verify'
+      action = 'Verify power, network, and assignment before cutover.'
+    } else if (online || !offline) {
+      category = 'investigate'
+      action = 'Investigate — active on the server but missing from the migration device list.'
+    } else if (!hasAccount) {
+      category = 'strongCleanup'
+      action = 'Strong cleanup candidate — offline, not migrating, and no SIP account is assigned.'
+    } else {
+      category = 'cleanup'
+      action = 'Cleanup candidate — verify ownership and last report before removing from the server.'
+    }
+
+    const duplicateAccounts = (device.accounts || [])
+      .map(account => account.info)
+      .filter(info => {
+        const owners = accountMacs.get(normalizedAccount(info))
+        return owners && owners.size > 1
+      })
+
+    return {
+      ...device,
+      mac,
+      inMigration,
+      category,
+      categoryLabel:YEALINK_AUDIT_LABELS[category],
+      action,
+      duplicateAccounts,
+    }
+  })
+}
+
+export function yealinkAuditExceptions(rows = []) {
+  return rows.filter(row => row.category !== 'ready' || row.duplicateAccounts?.length)
 }
 
 export function migrationE911Fields(data = {}) {
