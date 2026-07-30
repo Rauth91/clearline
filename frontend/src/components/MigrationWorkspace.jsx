@@ -32,6 +32,7 @@ import {
   extensionsByDn,
   migrationE911Fields,
   migrationUserFromLine,
+  netSapiensPhoneModel,
   normalizeMigrationExtension,
   yealinkAuditExceptions,
   yealinkServerDeviceFromRow,
@@ -114,7 +115,7 @@ function emptyMigration() {
     domain:'', mainBTN:'', callerIdNum:'', callerIdName:'',
     e911Address1:'', e911Address2:'', e911City:'', e911State:'', e911Zip:'',
     server:'core2-ord', tz:'US/Central',
-    area:'', pin:'1234', scope:'Basic User',
+    area:'', scope:'Basic User',
     dialPerm:'US and Canada', emailDom:'', timeout:'25',
     line2:true,
     users:[], devices:[], sharedDeviceApprovals:[],
@@ -634,9 +635,6 @@ function StepAccount({ data, onChange }) {
           <Field label="Dial Permission">
             <MSelect value={data.dialPerm} onChange={v=>set('dialPerm',v)} options={PERMS}/>
           </Field>
-          <Field label="Default VM PIN">
-            <MInput value={data.pin} onChange={v=>set('pin',v)} placeholder="1234"/>
-          </Field>
           <Field label="Answer Timeout (s)">
             <MInput value={data.timeout} onChange={v=>set('timeout',v)} placeholder="25"/>
           </Field>
@@ -691,7 +689,7 @@ function StepUsers({ data, onChange }) {
       return
     }
     const users = rows
-      .map(ln => migrationUserFromLine(ln, { id:makeId(), defaultPin:data.pin||'1234' }))
+      .map(ln => migrationUserFromLine(ln, { id:makeId() }))
       .filter(Boolean)
     onChange({ ...data, users })
     setImportLog(l=>[...l.slice(-2), `${users.length} users imported from "${filename}" — enter each NetSapiens extension below`])
@@ -704,7 +702,7 @@ function StepUsers({ data, onChange }) {
   )
 
   function updateUser(id, f, v) { onChange({ ...data, users:(data.users||[]).map(u=>u.id===id?{...u,[f]:v}:u) }) }
-  function addUser() { onChange({ ...data, users:[...(data.users||[]),{id:makeId(),dn:'',ext:'',firstName:'',lastName:'-',email:'',vmPin:data.pin||'1234',dept:'',site:'',did:''}] }) }
+  function addUser() { onChange({ ...data, users:[...(data.users||[]),{id:makeId(),dn:'',ext:'',firstName:'',lastName:'-',email:'',vmPin:'',dept:'',site:'',did:''}] }) }
   function removeUser(id) { onChange({ ...data, users:(data.users||[]).filter(u=>u.id!==id) }) }
 
   const SCOPES = ['Basic User','Simple User','Call Center Agent','Call Center Supervisor','Office Manager','Site Manager']
@@ -835,7 +833,7 @@ function StepDevices({ data, onChange }) {
       const mac = normMAC(d['MAC Address'])
       if (!mac) return null
       const key = String(d['Device Model']||'').trim().replace(/\s+/g,' ').toLowerCase()
-      const model = MODEL_MAP[key] || d['Device Model'] || ''
+      const model = netSapiensPhoneModel(MODEL_MAP[key] || d['Device Model'] || '')
       const dn = normDN(d['Subscriber Directory Number'])
       return { id:makeId(), mac, model, dn, line1:'', line2:'', notes:d['Description']||'' }
     }).filter(Boolean)
@@ -1469,7 +1467,7 @@ function StepProgramming({ data, onChange, jobId }) {
         'extension*':extension, 'domain':domain, 'first name*':firstName, 'last name*':lastName,
         'login':extension ? extension+'@'+domain : '', 'portal password':' ',
         'email address':u.email||generatedEmail,
-        'voicemail pin':u.vmPin||data.pin, 'department':u.dept||'', 'site':u.site||'',
+        'voicemail pin':'', 'department':u.dept||'', 'site':u.site||'',
         'vmail enabled':'yes','answer timeout':data.timeout,'timezone':data.tz,
         'area code':data.area,'callerid number':data.callerIdNum,'callerid name':data.callerIdName,
         '911 callerid':data.callerIdNum||data.mainBTN,'dial plan':domain,'dial permission':data.dialPerm,
@@ -1481,7 +1479,7 @@ function StepProgramming({ data, onChange, jobId }) {
     const extByDN = {}
     userRows.forEach(u => { if (u._dn) extByDN[u._dn] = u['extension*'] })
     const phoneRows = (data.devices||[]).map(d => ({
-      'MAC':d.mac,'Model':d.model,'Server':data.server,
+      'MAC':d.mac,'Model':netSapiensPhoneModel(d.model),'Server':data.server,
       'Line 1':d.line1||extByDN[d.dn]||'',
       'Line 2':data.line2?(d.line2||d.line1||extByDN[d.dn]||''):'',
       'Line 3':'','Line 4':'','Line 5':'','Line 6':'','Notes':d.notes||'',

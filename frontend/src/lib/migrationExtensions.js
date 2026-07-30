@@ -39,7 +39,7 @@ export function splitMigrationName(value) {
   return [parts[0], cleanMigrationName(parts.slice(1).join(' ')) || '-']
 }
 
-export function migrationUserFromLine(row, { id, defaultPin = '1234' } = {}) {
+export function migrationUserFromLine(row, { id, defaultPin = '' } = {}) {
   let dn = cleanImportedField(row?.['Directory number']).replace(/\D/g, '')
   if (dn.length === 11 && dn.startsWith('1')) dn = dn.slice(1)
   if (!dn) return null
@@ -65,6 +65,19 @@ export function normalizeMigrationExtension(value) {
 
 export function normalizeMigrationMac(value) {
   return String(value ?? '').replace(/[^0-9A-Fa-f]/g, '').toLowerCase()
+}
+
+export function netSapiensPhoneModel(value) {
+  const raw = cleanImportedField(value)
+  const candidate = raw
+    .toUpperCase()
+    .replace(/^YEALINK[\s-]*/, '')
+    .replace(/^SIP[\s-]*/, '')
+    .replace(/[\s-]+/g, '_')
+    .replace(/_+/g, '_')
+  return /^T\d+[A-Z0-9_]*$/.test(candidate)
+    ? `Yealink SIP-${candidate}`
+    : raw
 }
 
 export function analyzeMigrationExtensions(users = []) {

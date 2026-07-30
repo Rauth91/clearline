@@ -8,6 +8,7 @@ import {
   extensionsByDn,
   migrationE911Fields,
   migrationUserFromLine,
+  netSapiensPhoneModel,
   normalizeMigrationExtension,
   normalizeMigrationMac,
   splitMigrationName,
@@ -39,6 +40,10 @@ describe('migration extension import', () => {
       lastName:'Doe',
       vmPin:'2468',
     })
+    expect(migrationUserFromLine({
+      'Directory number':'2255551234',
+      Name:'Jane Doe',
+    }, { id:'user-2' }).vmPin).toBe('')
   })
 
   it('removes wrapping quotes and supplies a dash for a blank last name', () => {
@@ -95,6 +100,15 @@ describe('custom migration extensions', () => {
 })
 
 describe('device extension assignments', () => {
+  it('formats Yealink models for the NetSapiens phone import', () => {
+    expect(netSapiensPhoneModel('Yealink T53W')).toBe('Yealink SIP-T53W')
+    expect(netSapiensPhoneModel('SIP-T53w')).toBe('Yealink SIP-T53W')
+    expect(netSapiensPhoneModel('Yealink T54W')).toBe('Yealink SIP-T54W')
+    expect(netSapiensPhoneModel('Yealink T46S')).toBe('Yealink SIP-T46S')
+    expect(netSapiensPhoneModel('Yealink T21P_E2')).toBe('Yealink SIP-T21P_E2')
+    expect(netSapiensPhoneModel('Polycom VVX450')).toBe('Polycom VVX450')
+  })
+
   it('finds an extension assigned to multiple MAC addresses', () => {
     const result = analyzeDeviceExtensionAssignments([
       { id:'a', mac:'AA:BB:CC:DD:EE:01', dn:'2255551000', line1:'' },
