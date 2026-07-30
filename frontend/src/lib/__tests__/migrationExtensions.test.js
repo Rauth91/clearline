@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  analyzeDeviceExtensionAssignments,
   analyzeMigrationExtensions,
+  cleanImportedField,
   cleanMigrationName,
   extensionsByDn,
   migrationE911Fields,
@@ -10,6 +12,13 @@ import {
 } from '../migrationExtensions.js'
 
 describe('migration extension import', () => {
+  it('removes wrapping quotes from fields without changing internal apostrophes', () => {
+    expect(cleanImportedField("'2255551234'")).toBe('2255551234')
+    expect(cleanImportedField('"Sales"')).toBe('Sales')
+    expect(cleanImportedField("'O'Brien'")).toBe("O'Brien")
+    expect(cleanImportedField("30' cable")).toBe("30' cable")
+  })
+
   it('leaves the extension blank instead of deriving it from the DID', () => {
     const user = migrationUserFromLine({
       'Directory number': '1 (225) 555-1234',
@@ -78,5 +87,31 @@ describe('custom migration extensions', () => {
 
     expect([...result.missingIds]).toEqual(['a'])
     expect([...result.collisions]).toEqual(['1001'])
+  })
+})
+
+describe('device extension assignments', () => {
+  it('finds an extension assigned to multiple MAC addresses', () => {
+    const result = analyzeDeviceExtensionAssignments([
+      { id:'a', mac:'AA:BB:CC:DD:EE:01', dn:'2255551000', line1:'' },
+      { id:'b', mac:'AA:BB:CC:DD:EE:02', dn:'2255551000', line1:'' },
+      { id:'c', mac:'AA:BB:CC:DD:EE:03', dn:'2255552000', line1:'' },
+    ], {
+      '2255551000':'1001',
+      '2255552000':'1002',
+    })
+
+    expect([...result.duplicateExtensions]).toEqual(['1001'])
+    expect(result.deviceCounts).toEqual({ '1001':2, '1002':1 })
+  })
+
+  it('does not count a repeated row for the same MAC as multiple devices', () => {
+    const result = analyzeDeviceExtensionAssignments([
+      { id:'a', mac:'aabbccddee01', line1:'1001' },
+      { id:'b', mac:'aabbccddee01', line1:'1001' },
+    ])
+
+    expect([...result.duplicateExtensions]).toEqual([])
+    expect(result.deviceCounts['1001']).toBe(1)
   })
 })

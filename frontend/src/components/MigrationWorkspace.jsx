@@ -9,7 +9,9 @@ import { makeId } from '../lib/surveyModel.js'
 import { getJob, getAccount, saveAccount } from '../lib/repo.js'
 import { createEmptyRoute } from '../lib/callFlowShape.js'
 import {
+  analyzeDeviceExtensionAssignments,
   analyzeMigrationExtensions,
+  cleanImportedField,
   cleanMigrationName,
   extensionsByDn,
   migrationE911Fields,
@@ -36,12 +38,12 @@ function parseCSV(text) {
   }
   if (field !== '' || row.length) { row.push(field); rows.push(row) }
   if (!rows.length) return []
-  const head = rows[0].map(h => h.trim())
+  const head = rows[0].map(cleanImportedField)
   const out = []
   for (let i = 1; i < rows.length; i++) {
     if (rows[i].every(v => v.trim() === '')) continue
     const o = {}
-    head.forEach((h, j) => o[h] = (rows[i][j] || '').trim())
+    head.forEach((h, j) => o[h] = cleanImportedField(rows[i][j]))
     out.push(o)
   }
   return out
@@ -583,6 +585,10 @@ function StepDevices({ data, onChange }) {
 
   // Only explicitly entered extensions may be assigned to devices.
   const extByDN = useMemo(() => extensionsByDn(data.users), [data.users])
+  const { duplicateExtensions, deviceCounts } = useMemo(
+    () => analyzeDeviceExtensionAssignments(data.devices, extByDN),
+    [data.devices, extByDN],
+  )
 
   function handleCSV(rows, filename) {
     const type = detectType(rows)
@@ -628,7 +634,21 @@ function StepDevices({ data, onChange }) {
         <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
           Devices
           <span className="mig-count-badge">{(data.devices||[]).length}</span>
+          {duplicateExtensions.size > 0 && (
+            <span className="mig-warn-badge">
+              {duplicateExtensions.size} shared extension{duplicateExtensions.size>1?'s':''}
+            </span>
+          )}
         </div>
+        {duplicateExtensions.size > 0 && (
+          <div className="mns-error" style={{marginBottom:10}}>
+            {[...duplicateExtensions].map(ext => (
+              <div key={ext}>
+                Extension {ext} is assigned to {deviceCounts[ext]} devices.
+              </div>
+            ))}
+          </div>
+        )}
         {(data.devices||[]).length > 0 && (
           <div className="mig-table-wrap">
             <table className="mns-table">
@@ -638,11 +658,15 @@ function StepDevices({ data, onChange }) {
                   const autoExt = d.dn ? extByDN[d.dn] || '' : ''
                   const l1 = d.line1 || autoExt
                   const l2 = data.line2 ? (d.line2 || l1) : d.line2
+                  const sharedExtension = duplicateExtensions.has(normalizeMigrationExtension(l1))
                   return (
-                    <tr key={d.id}>
+                    <tr key={d.id} className={sharedExtension?'mns-row-collision':''}>
                       <td><input className="mig-cell-input mig-cell-mono" value={d.mac} onChange={e=>updateDevice(d.id,'mac',e.target.value)} placeholder="aabbccddeeff"/></td>
                       <td><input className="mig-cell-input" value={d.model} onChange={e=>updateDevice(d.id,'model',e.target.value)} placeholder="Yealink T54W"/></td>
-                      <td><input className="mig-cell-input" value={l1} onChange={e=>updateDevice(d.id,'line1',e.target.value)} placeholder="1001"/></td>
+                      <td className="mig-device-ext-cell">
+                        <input className={`mig-cell-input${sharedExtension?' is-collision':''}`} value={l1} onChange={e=>updateDevice(d.id,'line1',e.target.value)} placeholder="1001"/>
+                        {sharedExtension && <span className="mns-collision-badge" title={`Extension ${l1} is on multiple devices`}>!</span>}
+                      </td>
                       <td><input className="mig-cell-input" value={l2} onChange={e=>updateDevice(d.id,'line2',e.target.value)}/></td>
                       <td><input className="mig-cell-input" value={d.notes} onChange={e=>updateDevice(d.id,'notes',e.target.value)}/></td>
                       <td><button type="button" className="mig-del-btn" onClick={()=>removeDevice(d.id)}>✕</button></td>

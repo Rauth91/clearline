@@ -11749,6 +11749,22 @@ select {
   background: var(--bg0);
 }
 
+.mig-cell-input.is-collision {
+  border-color: var(--err);
+  background: rgba(220, 38, 38, .06);
+  color: var(--err);
+}
+
+.mig-device-ext-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mig-device-ext-cell .mig-cell-input {
+  flex: 1;
+}
+
 .mig-cell-mono { font-family: var(--mono, monospace); }
 
 .mig-cell-select {

@@ -3,8 +3,22 @@
  * Extensions are always explicit; a DID is never used as a fallback.
  */
 
+export function cleanImportedField(value) {
+  let field = String(value ?? '').trim()
+  while (field.length >= 2) {
+    const first = field[0]
+    const last = field[field.length - 1]
+    if ((first === "'" && last === "'") || (first === '"' && last === '"')) {
+      field = field.slice(1, -1).trim()
+    } else {
+      break
+    }
+  }
+  return field
+}
+
 export function cleanMigrationName(value) {
-  let name = String(value ?? '').trim()
+  let name = cleanImportedField(value)
   name = name.replace(/^['"]+|['"]+$/g, '').trim()
   return name.replace(/\s+/g, ' ')
 }
@@ -26,7 +40,7 @@ export function splitMigrationName(value) {
 }
 
 export function migrationUserFromLine(row, { id, defaultPin = '1234' } = {}) {
-  let dn = String(row?.['Directory number'] ?? '').replace(/\D/g, '')
+  let dn = cleanImportedField(row?.['Directory number']).replace(/\D/g, '')
   if (dn.length === 11 && dn.startsWith('1')) dn = dn.slice(1)
   if (!dn) return null
 
@@ -39,7 +53,7 @@ export function migrationUserFromLine(row, { id, defaultPin = '1234' } = {}) {
     lastName,
     email: '',
     vmPin: defaultPin,
-    dept: String(row?.Department ?? '').trim(),
+    dept:cleanImportedField(row?.Department),
     site: '',
     did: dn,
   }
@@ -81,6 +95,34 @@ export function extensionsByDn(users = []) {
     if (dn && extension) result[dn] = extension
   }
   return result
+}
+
+export function analyzeDeviceExtensionAssignments(devices = [], extByDn = {}) {
+  const devicesByExtension = new Map()
+
+  for (const device of devices) {
+    const extension = normalizeMigrationExtension(
+      device.line1 || extByDn[device.dn] || '',
+    )
+    if (!extension) continue
+
+    const mac = String(device.mac ?? '').replace(/[^0-9A-Fa-f]/g, '').toLowerCase()
+    const deviceKey = mac || String(device.id ?? '')
+    if (!deviceKey) continue
+
+    const deviceKeys = devicesByExtension.get(extension) || new Set()
+    deviceKeys.add(deviceKey)
+    devicesByExtension.set(extension, deviceKeys)
+  }
+
+  const duplicateExtensions = new Set()
+  const deviceCounts = {}
+  for (const [extension, deviceKeys] of devicesByExtension) {
+    deviceCounts[extension] = deviceKeys.size
+    if (deviceKeys.size > 1) duplicateExtensions.add(extension)
+  }
+
+  return { duplicateExtensions, deviceCounts }
 }
 
 export function migrationE911Fields(data = {}) {
