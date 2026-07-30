@@ -8,6 +8,14 @@ import { loadJobMigration, saveJobMigration } from '../lib/jobModel.js'
 import { makeId } from '../lib/surveyModel.js'
 import { getJob, getAccount, saveAccount } from '../lib/repo.js'
 import { createEmptyRoute } from '../lib/callFlowShape.js'
+import {
+  analyzeMigrationExtensions,
+  cleanMigrationName,
+  extensionsByDn,
+  migrationE911Fields,
+  migrationUserFromLine,
+  normalizeMigrationExtension,
+} from '../lib/migrationExtensions.js'
 
 /* ── CSV helpers ──────────────────────────────────────────── */
 function parseCSV(text) {
@@ -56,23 +64,6 @@ function detectType(rows) {
 const normDN  = s => { let d = String(s||'').replace(/\D/g,''); if(d.length===11&&d[0]==='1') d=d.slice(1); return d }
 const normMAC = s => String(s||'').replace(/[^0-9A-Fa-f]/g,'').toLowerCase()
 
-/** Return the extension column name if the Metaswitch CSV includes one, else null. */
-function findExtCol(row) {
-  if (!row) return null
-  for (const col of ['Extension number', 'Extension No', 'Extension', 'Ext']) {
-    if (col in row) return col
-  }
-  return null
-}
-
-function splitName(raw) {
-  raw = String(raw||'').trim()
-  if (!raw) return ['','']
-  if (raw.includes(',')) { const i=raw.indexOf(','); return [raw.slice(i+1).trim(), raw.slice(0,i).trim()] }
-  const p = raw.split(/\s+/)
-  return p.length === 1 ? [p[0], ''] : [p[0], p.slice(1).join(' ')]
-}
-
 const MODEL_MAP = {
   'polycom vvx 150':'Polycom VVX150','polycom vvx 250':'Polycom VVX250','polycom vvx 300':'Polycom VVX300',
   'polycom vvx 350':'Polycom VVX350','polycom vvx 400':'Polycom VVX400','polycom vvx 410':'Polycom VVX410',
@@ -100,10 +91,11 @@ const E911_COLS  = ['call_back_number','address_name','caller_name','address_lin
 function emptyMigration() {
   return {
     domain:'', mainBTN:'', callerIdNum:'', callerIdName:'',
-    e911Address:'', server:'core2-ord', tz:'US/Central',
+    e911Address1:'', e911Address2:'', e911City:'', e911State:'', e911Zip:'',
+    server:'core2-ord', tz:'US/Central',
     area:'', pin:'1234', scope:'Basic User',
     dialPerm:'US and Canada', emailDom:'', timeout:'25',
-    extDigits:'4', line2:true,
+    line2:true,
     users:[], devices:[],
     autoAttendants:[], callFlows:[], huntGroups:[], buttonLayouts:[],
     // autoAttendants[]: { id, name, scheduleNotes, timeoutType, timeoutDest, menuKeys:[{id,digit,destType,destValue}] }
@@ -433,11 +425,6 @@ function StepAccount({ data, onChange }) {
           <Field label="Email Domain" hint="Builds first.last@domain.com automatically">
             <MInput value={data.emailDom} onChange={v=>set('emailDom',v)} placeholder="acmecorp.com"/>
           </Field>
-          <Field label="Extension Digits">
-            <MSelect value={data.extDigits} onChange={v=>set('extDigits',v)} options={[
-              {value:'3',label:'Last 3 digits'},{value:'4',label:'Last 4 digits (default)'},{value:'5',label:'Last 5 digits'},
-            ]}/>
-          </Field>
         </div>
         <label className="mns-checkline">
           <input type="checkbox" checked={!!data.line2} onChange={e=>set('line2',e.target.checked)}/>
@@ -448,8 +435,22 @@ function StepAccount({ data, onChange }) {
       <div className="mig-field-group">
         <div className="mig-field-group-title">E911</div>
         <div className="mig-field-row">
-          <Field label="Site Address">
-            <MInput value={data.e911Address} onChange={v=>set('e911Address',v)} placeholder="123 Main St, Baton Rouge LA 70801"/>
+          <Field label="Address 1">
+            <MInput value={data.e911Address1??data.e911Address??''} onChange={v=>set('e911Address1',v)} placeholder="123 Main St"/>
+          </Field>
+          <Field label="Address 2">
+            <MInput value={data.e911Address2||''} onChange={v=>set('e911Address2',v)} placeholder="Suite 200"/>
+          </Field>
+        </div>
+        <div className="mig-field-row">
+          <Field label="City">
+            <MInput value={data.e911City||''} onChange={v=>set('e911City',v)} placeholder="Baton Rouge"/>
+          </Field>
+          <Field label="State">
+            <MInput value={data.e911State||''} onChange={v=>set('e911State',v.toUpperCase().slice(0,2))} placeholder="LA"/>
+          </Field>
+          <Field label="ZIP">
+            <MInput value={data.e911Zip||''} onChange={v=>set('e911Zip',v)} placeholder="70801"/>
           </Field>
         </div>
       </div>
@@ -462,9 +463,6 @@ function StepAccount({ data, onChange }) {
    ════════════════════════════════════════════════════════════ */
 function StepUsers({ data, onChange }) {
   const [importLog, setImportLog] = useState([])
-  const [extOverrides, setExtOverrides] = useState({})
-  const [selectedExtCol, setSelectedExtCol] = useState('')
-  const [linesColumns, setLinesColumns] = useState([])
 
   function handleCSV(rows, filename) {
     const type = detectType(rows)
@@ -472,75 +470,28 @@ function StepUsers({ data, onChange }) {
       setImportLog(l=>[...l.slice(-2), `"${filename}" — not a Lines file`])
       return
     }
-    // Capture all columns for the picker
-    const cols = Object.keys(rows[0] || {}).filter(k => k !== 'Directory number')
-    setLinesColumns(cols)
-    setSelectedExtCol('')
-
-    const digits = parseInt(data.extDigits||4, 10)
-    const users = rows.map(ln => {
-      const dn = normDN(ln['Directory number'])
-      if (!dn) return null
-      const [first, last] = splitName(ln['Name'])
-      // No ext col selected yet — use DN slice as initial value; user picks column after
-      const ext = dn.slice(-digits)
-      return { id:makeId(), dn, ext, firstName:first, lastName:last,
-        email:'', vmPin:data.pin||'1234', dept:ln['Department']||'', site:'', did:dn,
-        _rawRow: ln }
-    }).filter(Boolean)
+    const users = rows
+      .map(ln => migrationUserFromLine(ln, { id:makeId(), defaultPin:data.pin||'1234' }))
+      .filter(Boolean)
     onChange({ ...data, users })
-    setExtOverrides({})
-    setImportLog(l=>[...l.slice(-2), `${users.length} users imported from "${filename}" — pick extension column below`])
+    setImportLog(l=>[...l.slice(-2), `${users.length} users imported from "${filename}" — enter each NetSapiens extension below`])
   }
 
-  function applyExtColumn(col) {
-    setSelectedExtCol(col)
-    setExtOverrides({})
-    const digits = parseInt(data.extDigits||4, 10)
-    const next = (data.users||[]).map(u => {
-      if (!u._rawRow) return u
-      const rawExt = col ? String(u._rawRow[col] || '').replace(/\D/g, '') : ''
-      return { ...u, ext: rawExt || u.dn.slice(-digits) }
-    })
-    onChange({ ...data, users: next })
-  }
+  const extRows = data.users || []
+  const { missingIds, collisions } = useMemo(
+    () => analyzeMigrationExtensions(extRows),
+    [extRows],
+  )
 
-  const { rows: extRows, collisions } = useMemo(() => {
-    const digits = parseInt(data.extDigits||4, 10)
-    const rows = (data.users||[]).map(u => ({
-      ...u,
-      ext: extOverrides[u.dn] ?? u.ext ?? normDN(u.dn||'').slice(-digits),
-    }))
-    const seen = {}
-    rows.forEach(r => { if (r.ext) { seen[r.ext] = seen[r.ext]||[]; seen[r.ext].push(r.dn) } })
-    const collisions = new Set(Object.keys(seen).filter(e=>seen[e].length>1))
-    return { rows, collisions }
-  }, [data.users, data.extDigits, extOverrides])
-
-  function applyExtOverride(dn, newExt) {
-    setExtOverrides(prev => {
-      const next = { ...prev }
-      const u = data.users.find(u=>u.dn===dn)
-      const auto = u ? (u.ext || '') : ''
-      if (newExt === auto) delete next[dn]
-      else next[dn] = newExt
-      return next
-    })
-  }
-  function syncExtToUsers() {
-    const next = (data.users||[]).map(u=>({...u, ext:extOverrides[u.dn]??u.ext}))
-    onChange({ ...data, users:next })
-    setExtOverrides({})
-  }
-  function updateUser(id, f, v) { onChange({ ...data, users:data.users.map(u=>u.id===id?{...u,[f]:v}:u) }) }
-  function addUser() { onChange({ ...data, users:[...(data.users||[]),{id:makeId(),dn:'',ext:'',firstName:'',lastName:'',email:'',vmPin:data.pin||'1234',dept:'',site:'',did:''}] }) }
+  function updateUser(id, f, v) { onChange({ ...data, users:(data.users||[]).map(u=>u.id===id?{...u,[f]:v}:u) }) }
+  function addUser() { onChange({ ...data, users:[...(data.users||[]),{id:makeId(),dn:'',ext:'',firstName:'',lastName:'-',email:'',vmPin:data.pin||'1234',dept:'',site:'',did:''}] }) }
   function removeUser(id) { onChange({ ...data, users:(data.users||[]).filter(u=>u.id!==id) }) }
 
   const SCOPES = ['Basic User','Simple User','Call Center Agent','Call Center Supervisor','Office Manager','Site Manager']
 
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">Drop the Metaswitch Lines CSV to auto-fill. Edit extensions and user details below.</p>
+      <p className="mig-step-desc">Drop the Metaswitch Lines CSV to auto-fill users, then enter each NetSapiens extension. The export does not provide extensions, so none are guessed from the phone number.</p>
 
       <div className="mig-field-group">
         <div className="mig-field-group-title">Import from Metaswitch</div>
@@ -554,25 +505,21 @@ function StepUsers({ data, onChange }) {
             {importLog.map((m,i)=><span key={i} className="mns-detect-chip">✓ {m}</span>)}
           </div>
         )}
-        {linesColumns.length > 0 && (
-          <div className="mig-field-row" style={{marginTop:12}}>
-            <Field label="Extension column" hint={selectedExtCol ? `Using "${selectedExtCol}" as extension` : 'No column selected — using last digits of DN'}>
-              <select className="mns-input" value={selectedExtCol} onChange={e=>applyExtColumn(e.target.value)}>
-                <option value="">— Slice last {data.extDigits||4} digits of DN —</option>
-                {linesColumns.map(col=><option key={col} value={col}>{col}</option>)}
-              </select>
-            </Field>
-          </div>
-        )}
       </div>
 
       <div className="mig-field-group">
         <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
           Users
           <span className="mig-count-badge">{(data.users||[]).length}</span>
+          {missingIds.size > 0 && <span className="mig-warn-badge">{missingIds.size} extension{missingIds.size>1?'s':''} required</span>}
           {collisions.size > 0 && <span className="mig-warn-badge">{collisions.size} collision{collisions.size>1?'s':''}</span>}
         </div>
 
+        {missingIds.size > 0 && (
+          <div className="mns-error" style={{marginBottom:10}}>
+            Enter a custom extension for every user before building the NetSapiens imports.
+          </div>
+        )}
         {collisions.size > 0 && (
           <div className="mns-error" style={{marginBottom:10}}>
             {collisions.size} extension collision{collisions.size>1?'s':''} detected — fix highlighted rows before building.
@@ -590,19 +537,22 @@ function StepUsers({ data, onChange }) {
                 <tbody>
                   {extRows.map(u => {
                     const clash = collisions.has(u.ext)
+                    const missing = missingIds.has(u.id)
                     return (
-                      <tr key={u.id} className={clash?'mns-row-collision':''}>
+                      <tr key={u.id} className={clash||missing?'mns-row-collision':''}>
                         <td className="mns-td-mono">{u.dn||'—'}</td>
                         <td>
                           <input
-                            className={`mns-ext-input${clash?' is-collision':extOverrides[u.dn]!==undefined?' is-overridden':''}`}
-                            value={u.ext}
-                            onChange={e=>applyExtOverride(u.dn, e.target.value.replace(/\D/g,'').slice(0,8))}
+                            className={`mns-ext-input${clash||missing?' is-collision':''}`}
+                            value={u.ext||''}
+                            onChange={e=>updateUser(u.id,'ext',normalizeMigrationExtension(e.target.value))}
+                            placeholder="Required"
+                            inputMode="numeric"
                           />
-                          {clash && <span className="mns-collision-badge">!</span>}
+                          {(clash||missing) && <span className="mns-collision-badge">!</span>}
                         </td>
-                        <td><input className="mig-cell-input" value={u.firstName} onChange={e=>updateUser(u.id,'firstName',e.target.value)}/></td>
-                        <td><input className="mig-cell-input" value={u.lastName} onChange={e=>updateUser(u.id,'lastName',e.target.value)}/></td>
+                        <td><input className="mig-cell-input" value={u.firstName} onChange={e=>updateUser(u.id,'firstName',e.target.value)} onBlur={e=>updateUser(u.id,'firstName',cleanMigrationName(e.target.value))}/></td>
+                        <td><input className="mig-cell-input" value={u.lastName} onChange={e=>updateUser(u.id,'lastName',e.target.value)} onBlur={e=>updateUser(u.id,'lastName',cleanMigrationName(e.target.value)||'-')}/></td>
                         <td><input className="mig-cell-input" value={u.email} onChange={e=>updateUser(u.id,'email',e.target.value)} placeholder={data.emailDom?`first.last@${data.emailDom}`:'—'}/></td>
                         <td><input className="mig-cell-input" value={u.dept} onChange={e=>updateUser(u.id,'dept',e.target.value)}/></td>
                         <td>
@@ -617,11 +567,6 @@ function StepUsers({ data, onChange }) {
                 </tbody>
               </table>
             </div>
-            {Object.keys(extOverrides).length > 0 && (
-              <button type="button" className="btn btn-secondary" style={{marginTop:8}} onClick={syncExtToUsers}>
-                Apply extension edits
-              </button>
-            )}
           </>
         )}
         <button type="button" className="btn btn-secondary" style={{marginTop:extRows.length?8:0}} onClick={addUser}>+ Add user</button>
@@ -636,13 +581,8 @@ function StepUsers({ data, onChange }) {
 function StepDevices({ data, onChange }) {
   const [importLog, setImportLog] = useState([])
 
-  // build ext-by-DN lookup from users
-  const extByDN = useMemo(() => {
-    const digits = parseInt(data.extDigits||4,10)
-    const m = {}
-    ;(data.users||[]).forEach(u => { if (u.dn) m[u.dn] = u.ext || u.dn.slice(-digits) })
-    return m
-  }, [data.users, data.extDigits])
+  // Only explicitly entered extensions may be assigned to devices.
+  const extByDN = useMemo(() => extensionsByDn(data.users), [data.users])
 
   function handleCSV(rows, filename) {
     const type = detectType(rows)
@@ -1020,18 +960,27 @@ function StepBuild({ data, onChange, jobId }) {
 
   const { userRows, phoneRows, e911Rows, reviewRows } = useMemo(() => {
     const domain = data.domain || 'DOMAIN'
-    const userRows = (data.users||[]).map(u => ({
-      'extension*':u.ext, 'domain':domain, 'first name*':u.firstName, 'last name*':u.lastName,
-      'login':u.ext+'@'+domain, 'portal password':' ',
-      'email address':u.email||(data.emailDom&&u.firstName&&u.lastName?`${u.firstName}.${u.lastName}@${data.emailDom}`.toLowerCase():''),
-      'voicemail pin':u.vmPin||data.pin, 'department':u.dept||'', 'site':u.site||'',
-      'vmail enabled':'yes','answer timeout':data.timeout,'timezone':data.tz,
-      'area code':data.area,'callerid number':data.callerIdNum,'callerid name':data.callerIdName,
-      '911 callerid':data.e911Address||data.callerIdNum,'dial plan':domain,'dial permission':data.dialPerm,
-      'audio directory':'yes','visual directory':'yes','vmail_transcribe':'no',
-      'email_vmail':'attnew','email_vmail_enable':'yes','add phone extension':'yes','scope':u.scope||data.scope,
-      _dn:u.dn,
-    }))
+    const e911 = migrationE911Fields(data)
+    const userRows = (data.users||[]).map(u => {
+      const extension = normalizeMigrationExtension(u.ext)
+      const firstName = cleanMigrationName(u.firstName)
+      const lastName = cleanMigrationName(u.lastName) || '-'
+      const generatedEmail = data.emailDom && firstName && lastName !== '-'
+        ? `${firstName}.${lastName}@${data.emailDom}`.toLowerCase()
+        : ''
+      return {
+        'extension*':extension, 'domain':domain, 'first name*':firstName, 'last name*':lastName,
+        'login':extension ? extension+'@'+domain : '', 'portal password':' ',
+        'email address':u.email||generatedEmail,
+        'voicemail pin':u.vmPin||data.pin, 'department':u.dept||'', 'site':u.site||'',
+        'vmail enabled':'yes','answer timeout':data.timeout,'timezone':data.tz,
+        'area code':data.area,'callerid number':data.callerIdNum,'callerid name':data.callerIdName,
+        '911 callerid':data.callerIdNum||data.mainBTN,'dial plan':domain,'dial permission':data.dialPerm,
+        'audio directory':'yes','visual directory':'yes','vmail_transcribe':'no',
+        'email_vmail':'attnew','email_vmail_enable':'yes','add phone extension':'yes','scope':u.scope||data.scope,
+        _dn:u.dn,
+      }
+    })
     const extByDN = {}
     userRows.forEach(u => { if (u._dn) extByDN[u._dn] = u['extension*'] })
     const phoneRows = (data.devices||[]).map(d => ({
@@ -1042,18 +991,20 @@ function StepBuild({ data, onChange, jobId }) {
     }))
     const e911Rows = userRows.map(u => ({
       'call_back_number':u._dn||u['extension*'],
-      'address_name':data.e911Address||'',
+      'address_name':data.callerIdName||domain,
       'caller_name':`${u['first name*']} ${u['last name*']}`.trim()||data.callerIdName,
-      'address_line_1':'','address_line_2':'','country_code':'US','state_code':'',
-      'city':'','zip':'','location':'','user/site':u['extension*'],'assign':'no',
+      'address_line_1':e911.addressLine1,'address_line_2':e911.addressLine2,
+      'country_code':'US','state_code':e911.state,'city':e911.city,'zip':e911.zip,
+      'location':'','user/site':u['extension*'],'assign':'no',
     }))
     const reviewRows = []
     const seen = {}
     userRows.forEach(u => {
-      if (!u['first name*']&&!u['last name*']) reviewRows.push({Issue:'Missing name',Key:u['extension*'],Detail:'',Action:'Set first and last name before import'})
+      if (!u['extension*']) reviewRows.push({Issue:'Missing extension',Key:u._dn||'',Detail:'Custom extension required',Action:'Enter the NetSapiens extension in the Users step'})
+      if (!u['first name*']) reviewRows.push({Issue:'Missing first name',Key:u['extension*']||u._dn||'',Detail:'',Action:'Set a first name before import'})
       const ext = u['extension*']
-      if (seen[ext]) reviewRows.push({Issue:'Extension collision',Key:ext,Detail:'Duplicate',Action:'Fix extension before import'})
-      seen[ext] = true
+      if (ext && seen[ext]) reviewRows.push({Issue:'Extension collision',Key:ext,Detail:'Duplicate',Action:'Fix extension before import'})
+      if (ext) seen[ext] = true
     })
     ;(data.devices||[]).forEach(d => {
       if (d.mac&&d.mac.length!==12) reviewRows.push({Issue:'MAC length',Key:d.mac,Detail:'Expected 12 hex chars',Action:'Correct MAC'})
