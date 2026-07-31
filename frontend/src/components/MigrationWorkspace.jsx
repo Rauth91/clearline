@@ -5,28 +5,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { loadJobMigration, saveJobMigration } from '../lib/jobModel.js'
+import { FIRMWARE_TABLE, auditDevice } from '../lib/firmwareTable.js'
 import { makeId } from '../lib/surveyModel.js'
-import { getJob, getAccount, saveAccount } from '../lib/repo.js'
-import { createEmptyRoute } from '../lib/callFlowShape.js'
-import { FIRMWARE_STARTER_SET, listFirmwareRefs } from '../lib/firmwareModel.js'
-import {
-  DECOMMISSION_CHECKS,
-  FOLLOWUP_CHECKS,
-  INSTALL_CHECKS,
-  PLANNING_CHECKS,
-  QC_CHECKS,
-  RESEARCH_CHECKS,
-  RPP_CHECKS,
-  buildDeviceReadiness,
-  canCompleteMetaDecommission,
-  checklistComplete,
-  compareMigrationNumberLists,
-  migrationPhaseCompletion,
-} from '../lib/migrationLifecycle.js'
 import {
   analyzeDeviceExtensionAssignments,
   analyzeMigrationExtensions,
-  buildYealinkServerAudit,
+  applyBulkExtensions,
   cleanImportedField,
   cleanMigrationName,
   extensionsByDn,
@@ -34,8 +18,9 @@ import {
   migrationUserFromLine,
   netSapiensPhoneModel,
   normalizeMigrationExtension,
-  yealinkAuditExceptions,
-  yealinkServerDeviceFromRow,
+  parseBulkExtensions,
+  previewBulkExtensionApply,
+  SYSTEM_CONFIG_CHECKS,
 } from '../lib/migrationExtensions.js'
 
 /* ── CSV helpers ──────────────────────────────────────────── */
@@ -76,7 +61,6 @@ function toCSV(cols, rows) {
 function detectType(rows) {
   if (!rows?.length) return null
   const keys = new Set(Object.keys(rows[0]))
-  if (keys.has('MAC') && keys.has('Device Status') && keys.has('Last Report Time')) return 'yealink-server'
   if (keys.has('MAC Address') && keys.has('Device Model')) return 'devices'
   if (keys.has('Directory number') && keys.has('Name')) return 'lines'
   if (keys.has('Directory number')) return 'dns'
@@ -119,68 +103,23 @@ function emptyMigration() {
     dialPerm:'US and Canada', emailDom:'', timeout:'25',
     line2:true,
     users:[], devices:[], sharedDeviceApprovals:[],
-    yealinkServerDevices:[], yealinkAuditFileName:'',
+    // Legacy fields retained for older saved migrations; UI no longer edits them.
     autoAttendants:[], callFlows:[], huntGroups:[], buttonLayouts:[],
-    // autoAttendants[]: { id, name, scheduleNotes, timeoutType, timeoutDest, menuKeys:[{id,digit,destType,destValue}] }
-    // buttonLayouts[]:  { id, extension, keyRows:[{id,type,value,label}], sidecarNotes, notes }
-    research:{ checks:{}, contact:'', sites:'', targetDate:'', scope:'', currentSystem:'Meta', portingStatus:'', risks:'', notes:'', feasibility:'', rationale:'' },
-    planning:{ checks:{}, owner:'', firmwarePlan:'', replacementPlan:'', networkPlan:'', cutoverWindow:'', rollbackPlan:'', dependencies:'', notes:'' },
-    rpp:{ checks:{}, accountId:'', targetPlatform:'NetSapiens', expectedNumbers:'', resultingNumbers:'', technician:'', completedAt:'', exceptions:'', notes:'' },
-    install:{ checks:{}, notes:'' },
-    followup:{ checks:{}, followupDate:'', openIssues:'', customerApproved:false, approvedBy:'', notes:'' },
-    decommission:{ checks:{}, completedBy:'', completedAt:'', notes:'' },
+    systemConfig:{},
     build:{},
+    // Phase 0 — Pre-Migration
+    kickoff:{ owner:'', reviewerName:'', cutoverDate:'', networkReqSent:false, networkReqDate:'', notes:'' },
+    hardwareAudit:[],
+    featureInventory:{},
+    sites:[],
+    // Phase 2 — Cutover
+    gonogo:{ reviewerName:'', reviewerSignoff:false, signoffDate:'', overrides:{} },
+    runbook:[],
+    phoneTracker:[],
+    // Phase 3 — Post-Cutover
+    testCalls:{},
+    signoff:{ customerName:'', signedAt:'', notes:'' },
   }
-}
-
-/* ── Migration → Call Flow mapper ────────────────────────── */
-function migrationToRoutes(data) {
-  const callFlows = data.callFlows || []
-  const aas = data.autoAttendants || []
-  const hgs = data.huntGroups || []
-
-  const hgSummary = hgs.map(h =>
-    [h.name, h.type && `(${h.type})`, h.members && `Members: ${h.members}`].filter(Boolean).join(' — ')
-  ).join('\n')
-
-  function buildRoute(cf, aaIndex) {
-    const aa = aas[aaIndex] || null
-    const aaFields = {}
-    if (aa) {
-      aaFields.enabled = 'Yes'
-      aaFields.greeting = aa.name || ''
-      aaFields.notes = aa.scheduleNotes || ''
-      aaFields.timeoutAction = [aa.timeoutDest, aa.timeoutType].filter(Boolean).join(': ') || ''
-      ;(aa.menuKeys || []).forEach(k => {
-        const digit = String(k.digit || '')
-        if (digit !== '') {
-          aaFields[`option${digit}`] = k.destValue || k.destType || ''
-          aaFields[`optionType${digit}`] = k.destType || ''
-        }
-      })
-    }
-
-    const mainNumbers = cf && cf.phoneNumber
-      ? [{ id: makeId(), number: cf.phoneNumber, label: cf.normalDest || '' }]
-      : []
-
-    return createEmptyRoute({
-      name: cf ? (cf.phoneNumber || cf.normalDest || 'Main route') : 'Main route',
-      mainNumbers,
-      autoAttendant: aaFields,
-      callFlow: {
-        daytimePath: cf?.normalDest || (aa?.name ? `AA: ${aa.name}` : ''),
-        afterHoursPath: cf?.closedDest || '',
-        ringGroups: hgSummary,
-        notes: cf?.notes || '',
-      },
-    })
-  }
-
-  if (!callFlows.length) {
-    return [buildRoute(null, 0)]
-  }
-  return callFlows.map((cf, i) => buildRoute(cf, i))
 }
 
 /* ── Download helper ──────────────────────────────────────── */
@@ -213,190 +152,6 @@ function MSelect({ value, onChange, options }) {
   )
 }
 
-function MTextarea({ value, onChange, placeholder, rows=3 }) {
-  return <textarea className="mns-input mig-textarea" rows={rows} value={value||''} onChange={e=>onChange(e.target.value)} placeholder={placeholder}/>
-}
-
-function ChecklistPanel({ items, values = {}, onChange, disabledKeys = new Set() }) {
-  return (
-    <div className="mig-lifecycle-checklist">
-      {items.map(item => {
-        const done = !!values[item.key]
-        const disabled = disabledKeys.has(item.key)
-        return (
-          <button
-            key={item.key}
-            type="button"
-            className={`mig-check-row${done?' is-done':''}${disabled?' is-disabled':''}`}
-            disabled={disabled}
-            onClick={()=>onChange({ ...values, [item.key]:!done })}
-          >
-            <span className={`mig-check-box${done?' is-checked':''}`}>{done?'✓':''}</span>
-            <span className="mig-check-content">
-              <span className="mig-check-label">{item.label}</span>
-            </span>
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-function PhaseWarning({ children }) {
-  if (!children) return null
-  return <div className="mig-phase-warning">{children}</div>
-}
-
-/* ── Button Layout paged key builder ─────────────────────── */
-const KEY_TYPES = [
-  { value:'line',      label:'Line'        },
-  { value:'blf',       label:'BLF'         },
-  { value:'speeddial', label:'Speed Dial'  },
-  { value:'callpark',  label:'Call Park'   },
-  { value:'intercom',  label:'Intercom'    },
-  { value:'dtmf',      label:'DTMF'        },
-  { value:'empty',     label:'Empty'       },
-]
-const KEY_VALUE_HINT = { line:'Extension', blf:'Extension to monitor', speeddial:'Phone number', callpark:'Park orbit (optional)', intercom:'Extension', dtmf:'Digits', empty:'' }
-const KEY_LABEL_SHOW = new Set(['blf','speeddial'])
-
-function KeyList({ keys = [], onChange }) {
-  function addKey() { onChange([...keys, { id:makeId(), type:'line', value:'', label:'' }]) }
-  function update(id, f, v) { onChange(keys.map(k => k.id===id ? {...k,[f]:v} : k)) }
-  function remove(id) { onChange(keys.filter(k => k.id!==id)) }
-  function move(idx, dir) {
-    const next = [...keys]; const swap = idx + dir
-    if (swap < 0 || swap >= next.length) return
-    ;[next[idx], next[swap]] = [next[swap], next[idx]]; onChange(next)
-  }
-  return (
-    <div className="mig-key-builder">
-      {keys.map((k, idx) => (
-        <div key={k.id} className="mig-key-row">
-          <span className="mig-key-num">{idx + 1}</span>
-          <select className="mig-key-type-sel" value={k.type} onChange={e=>update(k.id,'type',e.target.value)}>
-            {KEY_TYPES.map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
-          {k.type !== 'empty' && (
-            <input className="mig-key-val-input" value={k.value} placeholder={KEY_VALUE_HINT[k.type]||'Value'}
-              onChange={e=>update(k.id,'value',e.target.value)}/>
-          )}
-          {KEY_LABEL_SHOW.has(k.type) && (
-            <input className="mig-key-label-input" value={k.label} placeholder="Label (optional)"
-              onChange={e=>update(k.id,'label',e.target.value)}/>
-          )}
-          <div className="mig-key-actions">
-            <button type="button" className="mig-key-move" onClick={()=>move(idx,-1)} disabled={idx===0}>↑</button>
-            <button type="button" className="mig-key-move" onClick={()=>move(idx,1)} disabled={idx===keys.length-1}>↓</button>
-            <button type="button" className="mig-del-btn" onClick={()=>remove(k.id)}>✕</button>
-          </div>
-        </div>
-      ))}
-      <button type="button" className="btn btn-secondary mig-key-add" onClick={addKey}>+ Add key</button>
-    </div>
-  )
-}
-
-function PagedKeyBuilder({ pages = [], onChange }) {
-  const [activeIdx, setActiveIdx] = useState(0)
-  const safeIdx = Math.min(activeIdx, pages.length - 1)
-
-  function addPage() {
-    const n = pages.length + 1
-    const label = n === 2 ? 'Sidecar' : `Page ${n}`
-    const next = [...pages, { id:makeId(), label, keys:[] }]
-    onChange(next)
-    setActiveIdx(next.length - 1)
-  }
-  function removePage(idx) {
-    if (pages.length <= 1) return
-    const next = pages.filter((_,i)=>i!==idx)
-    onChange(next)
-    setActiveIdx(Math.min(safeIdx, next.length - 1))
-  }
-  function renamePage(idx, label) {
-    onChange(pages.map((p,i)=>i===idx?{...p,label}:p))
-  }
-  function setPageKeys(idx, keys) {
-    onChange(pages.map((p,i)=>i===idx?{...p,keys}:p))
-  }
-
-  const active = pages[safeIdx]
-
-  return (
-    <div className="mig-paged-builder">
-      {/* Tab strip */}
-      <div className="mig-page-tabs">
-        {pages.map((p, i) => (
-          <div key={p.id} className={`mig-page-tab${i===safeIdx?' is-active':''}`}>
-            {i === safeIdx
-              ? <input className="mig-page-tab-input" value={p.label}
-                  onChange={e=>renamePage(i, e.target.value)}
-                  onFocus={e=>e.target.select()}/>
-              : <button type="button" className="mig-page-tab-btn" onClick={()=>setActiveIdx(i)}>{p.label}</button>
-            }
-            {pages.length > 1 && (
-              <button type="button" className="mig-page-tab-remove" onClick={()=>removePage(i)} title="Remove page">✕</button>
-            )}
-          </div>
-        ))}
-        <button type="button" className="mig-page-add-btn" onClick={addPage}>+ Page</button>
-      </div>
-
-      {/* Active page key list */}
-      {active && (
-        <div className="mig-page-body">
-          <KeyList keys={active.keys||[]} onChange={keys=>setPageKeys(safeIdx,keys)}/>
-        </div>
-      )}
-    </div>
-  )
-}
-
-/* ── Auto Attendant menu key builder ─────────────────────── */
-const DIGITS = ['0','1','2','3','4','5','6','7','8','9','*','#']
-const DEST_TYPES = [
-  { value:'extension',     label:'Extension'      },
-  { value:'huntgroup',     label:'Hunt Group'     },
-  { value:'autoattendant', label:'Auto Attendant' },
-  { value:'voicemail',     label:'Voicemail'      },
-  { value:'directory',     label:'Directory'      },
-  { value:'hangup',        label:'Hang Up'        },
-]
-const DEST_NEEDS_VALUE = new Set(['extension','huntgroup','autoattendant','voicemail'])
-
-function MenuKeyBuilder({ menuKeys = [], onChange }) {
-  function addKey() {
-    const usedDigits = new Set(menuKeys.map(k=>k.digit))
-    const next = DIGITS.find(d=>!usedDigits.has(d)) || '0'
-    onChange([...menuKeys, { id:makeId(), digit:next, destType:'extension', destValue:'' }])
-  }
-  function update(id, f, v) { onChange(menuKeys.map(k => k.id===id ? {...k,[f]:v} : k)) }
-  function remove(id) { onChange(menuKeys.filter(k => k.id!==id)) }
-  return (
-    <div className="mig-key-builder">
-      {menuKeys.map(k => (
-        <div key={k.id} className="mig-key-row">
-          <span className="mig-aa-press">Press</span>
-          <select className="mig-key-digit-sel" value={k.digit} onChange={e=>update(k.id,'digit',e.target.value)}>
-            {DIGITS.map(d=><option key={d} value={d}>{d}</option>)}
-          </select>
-          <span className="mig-aa-arrow">→</span>
-          <select className="mig-key-type-sel" value={k.destType} onChange={e=>update(k.id,'destType',e.target.value)}>
-            {DEST_TYPES.map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
-          {DEST_NEEDS_VALUE.has(k.destType) && (
-            <input className="mig-key-val-input" value={k.destValue} placeholder="Ext / name / number"
-              onChange={e=>update(k.id,'destValue',e.target.value)}/>
-          )}
-          <button type="button" className="mig-del-btn" onClick={()=>remove(k.id)}>✕</button>
-        </div>
-      ))}
-      <button type="button" className="btn btn-secondary mig-key-add" onClick={addKey}>+ Add key</button>
-    </div>
-  )
-}
-
 /* ── Upload slot ──────────────────────────────────────────── */
 function UploadSlot({ label, hint, loaded, count, onFile }) {
   const ref = useRef()
@@ -423,160 +178,721 @@ function UploadSlot({ label, hint, loaded, count, onFile }) {
   )
 }
 
+/* ── Feature inventory reference data ────────────────────────── */
+const FEATURE_INVENTORY_ITEMS = [
+  { id:'aa',          label:'Auto Attendant',              status:'ok',        note:'Fully supported in NS' },
+  { id:'hg',          label:'Hunt Groups / Ring Groups',   status:'ok',        note:'Supported as Ring Groups in NS' },
+  { id:'vm_basic',    label:'Voicemail (per-user)',        status:'ok',        note:'Fully supported' },
+  { id:'vm_shared',   label:'Shared / Dept Voicemail',    status:'different', note:'Requires manual setup in NS — configure as a separate extension with shared access' },
+  { id:'vm_transfer', label:'Voicemail Transfer (Meta)',   status:'gap',       note:'⚠ Voicemails do NOT transfer to NS. Customer must be told before cutover.' },
+  { id:'find_me',     label:'Find Me / Follow Me',         status:'ok',        note:'Answering Rules in NS' },
+  { id:'call_fwd',    label:'Call Forwarding',             status:'ok',        note:'Fully supported' },
+  { id:'call_park',   label:'Call Park',                   status:'different', note:'Uses feature code on NS (verify current code with Reinvent)' },
+  { id:'conf3',       label:'3-Way Conference',            status:'different', note:'Use feature code *50 on NS — customer needs quick-ref card' },
+  { id:'dnd',         label:'Do Not Disturb',              status:'different', note:'Feature code based on NS — different from Meta button' },
+  { id:'recording',   label:'Call Recording',              status:'ok',        note:'Available via NS portal' },
+  { id:'blf',         label:'BLF / Busy Lamp Field',       status:'ok',        note:'Supported via button layouts' },
+  { id:'paging',      label:'Overhead Paging (Algo)',      status:'ok',        note:'SIP paging supported' },
+  { id:'after_hours', label:'After-Hours / Night Mode',    status:'ok',        note:'Time frames + answering rules in NS' },
+  { id:'ata',         label:'Analog Extensions (ATA)',     status:'ok',        note:'NS supports ATAs' },
+  { id:'e911',        label:'E911 / Emergency Calling',    status:'ok',        note:'Supported — must configure addresses in NS' },
+  { id:'admin_portal',label:'Admin Portal',               status:'different', note:'⚠ Completely different portal — customer must be trained' },
+  { id:'app',         label:'Softphone / Mobile App',      status:'different', note:'Different app than Meta — customer must download and set up fresh' },
+]
+
+/* ── Runbook and test call defaults ───────────────────────────── */
+const RUNBOOK_DEFAULTS = [
+  { task:'Confirm port is active / DID is routed to NS',      time:'T+0:00' },
+  { task:'Verify NS domain is provisioned and reachable',     time:'T+0:15' },
+  { task:'Confirm auto-provisioning server URL on phones',    time:'T+0:20' },
+  { task:'Phones begin provisioning — monitor first devices', time:'T+0:30' },
+  { task:'Verify ext-to-ext calling between first 3 phones',  time:'T+1:00' },
+  { task:'Test inbound call to main number',                  time:'T+1:15' },
+  { task:'Test auto attendant key routing',                   time:'T+1:20' },
+  { task:'Test voicemail (leave + retrieve)',                  time:'T+1:30' },
+  { task:'Test after-hours / night mode',                     time:'T+1:45' },
+  { task:'Test E911 (confirm address with carrier)',          time:'T+2:00' },
+  { task:'All phones confirmed online',                       time:'T+2:30' },
+  { task:'Customer walk-through: new portal + voicemail',    time:'T+3:00' },
+  { task:'Customer sign-off obtained',                        time:'T+3:30' },
+]
+
+const TEST_CALL_ITEMS = [
+  { key:'inbound_main', label:'Inbound call to main number',       detail:'Should ring AA or correct destination' },
+  { key:'aa_keys',      label:'Auto attendant key routing',        detail:'Test each key — press 0–9 and verify' },
+  { key:'ext_to_ext',   label:'Ext-to-ext internal call',          detail:'Call from one extension to another' },
+  { key:'outbound',     label:'Outbound call',                     detail:'Verify caller ID shows correctly' },
+  { key:'hg_ring',      label:'Hunt group rings all members',      detail:'All ring group members should ring' },
+  { key:'voicemail',    label:'Voicemail deposit and retrieval',   detail:'Leave VM, then retrieve via *97 or *98' },
+  { key:'after_hours',  label:'After-hours routing',               detail:'Toggle night mode, verify calls route to VM or AA' },
+  { key:'e911',         label:'E911 address confirmed',            detail:'Verify address with customer — no test call needed' },
+  { key:'direct_dial',  label:'Direct DID to extension',          detail:'Call a direct number, verify it rings correct ext' },
+]
+
 /* ════════════════════════════════════════════════════════════
-   LIFECYCLE — Research
+   PHASE 0 — Pre-Migration steps
    ════════════════════════════════════════════════════════════ */
-function StepResearch({ data, onChange }) {
-  const [firmwareRefs, setFirmwareRefs] = useState([])
-  const [firmwareLoading, setFirmwareLoading] = useState(true)
-  const research = data.research || {}
 
-  useEffect(() => {
-    let active = true
-    listFirmwareRefs()
-      .then(rows => { if (active) setFirmwareRefs(rows.length ? rows : FIRMWARE_STARTER_SET) })
-      .catch(err => console.error('Firmware references unavailable', err))
-      .finally(() => { if (active) setFirmwareLoading(false) })
-    return () => { active = false }
-  }, [])
+/* ── Step 0: Kickoff & Ownership ─────────────────────────────── */
+function StepKickoff({ data, onChange }) {
+  const k = data.kickoff || {}
+  function set(f, v) { onChange({ ...data, kickoff: { ...k, [f]: v } }) }
+  return (
+    <div className="mig-step-body">
+      <p className="mig-step-desc">Assign ownership before any work starts. One person is responsible for this migration from kickoff to sign-off — no owner means no start date.</p>
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Ownership</div>
+        <div className="mig-field-row">
+          <Field label="Migration Owner *">
+            <MInput value={k.owner||''} onChange={v=>set('owner',v)} placeholder="Your name"/>
+          </Field>
+          <Field label="QC Reviewer">
+            <MInput value={k.reviewerName||''} onChange={v=>set('reviewerName',v)} placeholder="Second tech who reviews before cutover"/>
+          </Field>
+          <Field label="Target Cutover Date">
+            <MInput type="date" value={k.cutoverDate||''} onChange={v=>set('cutoverDate',v)}/>
+          </Field>
+        </div>
+      </div>
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Network Requirements</div>
+        <div className={`mig-check-row${k.networkReqSent?' is-done':''}`} style={{cursor:'pointer'}}
+          onClick={()=>set('networkReqSent',!k.networkReqSent)}>
+          <div className={`mig-check-box${k.networkReqSent?' is-checked':''}`}>{k.networkReqSent?'✓':''}</div>
+          <div className="mig-check-content">
+            <div className="mig-check-label">Network requirements sent to customer</div>
+            <div className="mig-check-detail">QoS, VLAN, SIP ALG disable, firewall ports — sent at least 2 weeks before cutover</div>
+          </div>
+        </div>
+        {k.networkReqSent && (
+          <div style={{marginTop:8,paddingLeft:40}}>
+            <Field label="Date sent">
+              <MInput type="date" value={k.networkReqDate||''} onChange={v=>set('networkReqDate',v)}/>
+            </Field>
+          </div>
+        )}
+      </div>
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Notes</div>
+        <textarea className="mns-input mig-textarea" rows={3}
+          value={k.notes||''} onChange={e=>set('notes',e.target.value)}
+          placeholder="Customer contacts, special requirements, anything the team needs to know..."/>
+      </div>
+    </div>
+  )
+}
 
-  const readiness = useMemo(() => {
-    const rows = buildDeviceReadiness(data.devices||[], data.yealinkServerDevices||[], firmwareRefs)
-    return (data.devices||[]).length ? rows.filter(row=>row.inMigration) : rows
-  }, [data.devices, data.yealinkServerDevices, firmwareRefs])
-  const readinessCounts = useMemo(() => readiness.reduce((counts,row)=>{
-    counts[row.status] = (counts[row.status]||0)+1
-    return counts
-  },{}), [readiness])
+/* ── Step 1: Hardware Audit ──────────────────────────────────── */
+function StepHardwareAudit({ data, onChange }) {
+  const devices = data.hardwareAudit || []
+  const [newModel, setNewModel] = useState('')
+  const [newMac, setNewMac] = useState('')
+  const [newFw, setNewFw] = useState('')
 
-  function set(field, value) {
-    onChange({ ...data, research:{ ...research, [field]:value } })
+  function addDevice() {
+    if (!newModel.trim()) return
+    onChange({ ...data, hardwareAudit: [...devices, {
+      id:makeId(), mac:newMac.trim(), model:newModel.trim(), currentFw:newFw.trim(), notes:'',
+    }]})
+    setNewModel(''); setNewMac(''); setNewFw('')
   }
-  function setChecks(checks) {
-    onChange({ ...data, research:{ ...research, checks } })
+  function update(id, field, val) {
+    onChange({ ...data, hardwareAudit: devices.map(d=>d.id===id?{...d,[field]:val}:d) })
   }
+  function remove(id) {
+    onChange({ ...data, hardwareAudit: devices.filter(d=>d.id!==id) })
+  }
+
+  const statuses = devices.map(d=>auditDevice(d.model, d.currentFw))
+  const failCount = statuses.filter(s=>s.status==='fail').length
+  const warnCount = statuses.filter(s=>s.status==='warn').length
+  const STATUS_LABELS = { ok:'✓ OK', warn:'⚠ EOL', fail:'✕ Update needed', unknown:'? Verify' }
+  const STATUS_CLASS  = { ok:'mig-fw-ok', warn:'mig-fw-warn', fail:'mig-fw-fail', unknown:'mig-fw-unknown' }
 
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">Confirm the customer is a good migration candidate and capture everything required to reproduce the current programming.</p>
+      <p className="mig-step-desc">
+        Enter each device — model and current firmware. The app checks minimum versions required for NetSapiens provisioning and flags anything that needs attention before cutover day.
+      </p>
+
+      {failCount>0 && (
+        <div className="mig-audit-banner is-fail">
+          🚫 {failCount} device{failCount!==1?'s':''} need firmware updates before cutover can be scheduled.
+          {warnCount>0 && ` Also: ${warnCount} EOL device${warnCount!==1?'s':''} — verify support with Reinvent.`}
+        </div>
+      )}
+      {!failCount && warnCount>0 && (
+        <div className="mig-audit-banner is-warn">
+          ⚠ {warnCount} EOL device{warnCount!==1?'s':''} — verify support with Reinvent before committing to migration.
+        </div>
+      )}
+      {devices.length>0 && !failCount && !warnCount && (
+        <div className="mig-audit-banner is-ok">✓ All {devices.length} devices pass firmware check.</div>
+      )}
 
       <div className="mig-field-group">
-        <div className="mig-field-group-title">Customer and scope</div>
-        <div className="mig-field-row">
-          <Field label="Primary contact"><MInput value={research.contact||''} onChange={v=>set('contact',v)} placeholder="Name, phone, email"/></Field>
-          <Field label="Sites"><MInput value={research.sites||''} onChange={v=>set('sites',v)} placeholder="Main office + remote sites"/></Field>
-          <Field label="Target migration date"><MInput type="date" value={research.targetDate||''} onChange={v=>set('targetDate',v)}/></Field>
-          <Field label="Current system"><MInput value={research.currentSystem||'Meta'} onChange={v=>set('currentSystem',v)} placeholder="Meta"/></Field>
-        </div>
-        <Field label="Scope to reproduce">
-          <MTextarea value={research.scope||''} onChange={v=>set('scope',v)} placeholder="Users, numbers, call routing, schedules, groups, special keys, integrations…"/>
-        </Field>
-        <div className="mig-field-row">
-          <Field label="Porting status"><MInput value={research.portingStatus||''} onChange={v=>set('portingStatus',v)} placeholder="CSR received / LOA pending / FOC…"/></Field>
-          <Field label="Risks and dependencies"><MInput value={research.risks||''} onChange={v=>set('risks',v)} placeholder="Network work, analog lines, deadlines…"/></Field>
+        <div className="mig-field-group-title">Add Device</div>
+        <div className="mig-audit-add-row">
+          <select className="mns-input" value={newModel} onChange={e=>setNewModel(e.target.value)} style={{flex:2,minWidth:160}}>
+            <option value="">Select model...</option>
+            {FIRMWARE_TABLE.map(e=><option key={e.model} value={e.model}>{e.model}{e.eol?' (EOL)':''}</option>)}
+            <option value="Other">Other / not listed</option>
+          </select>
+          <input className="mns-input" placeholder="MAC (optional)" value={newMac} onChange={e=>setNewMac(e.target.value)} style={{width:140}}/>
+          <input className="mns-input" placeholder="Current firmware" value={newFw} onChange={e=>setNewFw(e.target.value)} style={{width:155}}/>
+          <button type="button" className="btn btn-primary" onClick={addDevice} disabled={!newModel}>+ Add</button>
         </div>
       </div>
 
-      <div className="mig-field-group">
-        <div className="mig-field-group-title">Research checklist</div>
-        <ChecklistPanel items={RESEARCH_CHECKS} values={research.checks||{}} onChange={setChecks}/>
-      </div>
-
-      <div className="mig-field-group">
-        <div className="mig-field-group-title">Device and firmware readiness</div>
-        {firmwareLoading ? (
-          <p className="mig-hint">Loading Firmware References…</p>
-        ) : readiness.length === 0 ? (
-          <p className="mig-hint">Add the Managed Devices or optional Yealink server CSV in Data Collection to populate this matrix.</p>
-        ) : (
-          <>
-            <div className="mig-audit-summary">
-              {[
-                ['ready','Ready'],
-                ['mismatch','Update'],
-                ['eol','EOL'],
-                ['unknownModel','Unknown model'],
-                ['versionMissing','Version missing'],
-                ['uncertified','No target'],
-              ].map(([key,label])=>(
-                <div key={key} className={`mig-audit-count is-${key}`}>
-                  <strong>{readinessCounts[key]||0}</strong><span>{label}</span>
+      {devices.length>0 && (
+        <div className="mig-field-group">
+          <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
+            Devices
+            <span className="mig-count-badge">{devices.length}</span>
+          </div>
+          <div className="mig-audit-table">
+            <div className="mig-audit-head">
+              <span>Model</span><span>MAC</span><span>Current FW</span><span>Status</span><span>Notes</span><span/>
+            </div>
+            {devices.map((d,i)=>{
+              const s = statuses[i]
+              return (
+                <div key={d.id} className="mig-audit-row">
+                  <span className="mig-audit-model">{d.model}</span>
+                  <span><input className="mns-input mig-audit-input" value={d.mac} onChange={e=>update(d.id,'mac',e.target.value)} placeholder="MAC"/></span>
+                  <span><input className="mns-input mig-audit-input" value={d.currentFw} onChange={e=>update(d.id,'currentFw',e.target.value)} placeholder="e.g. 66.86.0.20"/></span>
+                  <span className={`mig-fw-badge ${STATUS_CLASS[s.status]}`} title={s.message}>{STATUS_LABELS[s.status]}</span>
+                  <span><input className="mns-input mig-audit-input" value={d.notes} onChange={e=>update(d.id,'notes',e.target.value)} placeholder="Notes"/></span>
+                  <span><button type="button" className="mig-audit-del" onClick={()=>remove(d.id)}>✕</button></span>
                 </div>
-              ))}
-            </div>
-            <div className="mig-table-wrap">
-              <table className="mns-table mig-readiness-table">
-                <thead><tr><th>Model</th><th>MAC</th><th>Reported firmware</th><th>Certified target</th><th>Finding</th></tr></thead>
-                <tbody>
-                  {readiness.map(row=>(
-                    <tr key={row.mac} className={`mig-readiness-row is-${row.status}`}>
-                      <td>{row.model||'Unknown'}</td>
-                      <td className="mns-td-mono">{row.mac}</td>
-                      <td>{row.firmwareVersion||'—'}</td>
-                      <td>{row.certifiedVersion||'—'}</td>
-                      <td>{row.finding}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-      </div>
-
-      <div className="mig-field-group">
-        <div className="mig-field-group-title">Feasibility decision</div>
-        <div className="mig-field-row">
-          <Field label="Migration candidate">
-            <MSelect value={research.feasibility||''} onChange={v=>set('feasibility',v)} options={[
-              {value:'',label:'Select decision…'},
-              {value:'good',label:'Good candidate'},
-              {value:'conditional',label:'Conditional — planning actions required'},
-              {value:'not-ready',label:'Not ready'},
-            ]}/>
-          </Field>
-          <Field label="Decision rationale">
-            <MTextarea value={research.rationale||''} onChange={v=>set('rationale',v)} rows={2} placeholder="Why this customer is or is not ready"/>
-          </Field>
+              )
+            })}
+          </div>
         </div>
-        <Field label="Research notes"><MTextarea value={research.notes||''} onChange={v=>set('notes',v)} placeholder="Additional findings"/></Field>
+      )}
+
+      <details className="mig-field-group">
+        <summary className="mig-field-group-title" style={{cursor:'pointer',userSelect:'none',listStyle:'none'}}>
+          Firmware Reference Table ▸
+        </summary>
+        <div className="mig-audit-table" style={{marginTop:8}}>
+          <div className="mig-audit-head" style={{gridTemplateColumns:'2fr 1.5fr 3fr'}}>
+            <span>Model</span><span>Min Firmware for NS</span><span>Notes</span>
+          </div>
+          {FIRMWARE_TABLE.map(e=>(
+            <div key={e.model} className={`mig-audit-row${e.eol?' mig-audit-eol-row':''}`} style={{gridTemplateColumns:'2fr 1.5fr 3fr'}}>
+              <span>{e.model}</span>
+              <span>{e.minFw||'—'}</span>
+              <span style={{fontSize:11,color:'var(--muted)'}}>{e.eolNote||''}</span>
+            </div>
+          ))}
+        </div>
+      </details>
+    </div>
+  )
+}
+
+/* ── Step 2: Feature Inventory ───────────────────────────────── */
+function StepFeatureInventory({ data, onChange }) {
+  const inv = data.featureInventory || {}
+  function setItem(id, field, val) {
+    onChange({ ...data, featureInventory: { ...inv, [id]: { ...(inv[id]||{}), [field]: val } } })
+  }
+  const usedItems = FEATURE_INVENTORY_ITEMS.filter(f=>inv[f.id]?.used)
+  const gapCount  = usedItems.filter(f=>f.status==='gap').length
+  const diffCount = usedItems.filter(f=>f.status==='different').length
+  const STATUS_COLOR = { ok:'var(--ok)', different:'var(--warn)', gap:'#b45309' }
+  const STATUS_LABEL = { ok:'✓ Supported', different:'≠ Works differently on NS', gap:'⚠ Gap — action needed' }
+
+  return (
+    <div className="mig-step-body">
+      <p className="mig-step-desc">
+        Check every feature this customer uses on Metaswitch. Gaps and differences are flagged automatically so you can disclose them before committing to the migration.
+      </p>
+      {gapCount>0 && (
+        <div className="mig-audit-banner is-fail">
+          ⚠ {gapCount} feature gap{gapCount!==1?'s':''} — disclose to customer before cutover.
+          {diffCount>0 ? ` Also ${diffCount} feature${diffCount!==1?'s':''} that work differently on NS.` : ''}
+        </div>
+      )}
+      {!gapCount && diffCount>0 && (
+        <div className="mig-audit-banner is-warn">
+          {diffCount} feature{diffCount!==1?'s':''} work differently on NS — customer must be briefed before cutover.
+        </div>
+      )}
+      {!gapCount && !diffCount && usedItems.length>0 && (
+        <div className="mig-audit-banner is-ok">✓ No gaps — all used features are fully supported on NS.</div>
+      )}
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Feature Checklist</div>
+        <p className="mig-hint">Check the features this customer currently uses on Meta. Gaps and differences are flagged automatically.</p>
+        {FEATURE_INVENTORY_ITEMS.map(item=>{
+          const entry = inv[item.id] || {}
+          const isUsed = !!entry.used
+          return (
+            <div key={item.id} className={`mig-feat-row${isUsed?' is-checked':''}`}>
+              <div className="mig-feat-left" onClick={()=>setItem(item.id,'used',!isUsed)} style={{cursor:'pointer'}}>
+                <div className={`mig-check-box${isUsed?' is-checked':''}`}>{isUsed?'✓':''}</div>
+                <div className="mig-feat-info">
+                  <div className="mig-check-label">{item.label}</div>
+                  {isUsed && (
+                    <div className="mig-feat-status" style={{color:STATUS_COLOR[item.status]}}>
+                      {STATUS_LABEL[item.status]} — {item.note}
+                    </div>
+                  )}
+                </div>
+              </div>
+              {isUsed && item.status!=='ok' && (
+                <div style={{paddingLeft:40,marginTop:6}}>
+                  <input className="mns-input" style={{width:'100%',fontSize:12}}
+                    value={entry.notes||''} onChange={e=>setItem(item.id,'notes',e.target.value)}
+                    placeholder="Notes or action items for this feature..."/>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/* ── Step 3: Site Planning (multi-site) ──────────────────────── */
+function StepSites({ data, onChange }) {
+  const sites = data.sites || []
+  const [form, setForm] = useState({ name:'', contact:'', contactEmail:'', deviceCount:'', cutoverDate:'' })
+  const [showAdd, setShowAdd] = useState(false)
+
+  function addSite() {
+    if (!form.name.trim()) return
+    onChange({ ...data, sites:[...sites,{...form, id:makeId(), status:'pending'}]})
+    setForm({ name:'', contact:'', contactEmail:'', deviceCount:'', cutoverDate:'' })
+    setShowAdd(false)
+  }
+  function updateSite(id, field, val) {
+    onChange({ ...data, sites:sites.map(s=>s.id===id?{...s,[field]:val}:s) })
+  }
+  function removeSite(id) {
+    onChange({ ...data, sites:sites.filter(s=>s.id!==id) })
+  }
+
+  const STATUS_OPTS = ['pending','ready','cutover done','issue']
+  const STATUS_CLASS = { pending:'mig-site-pending', ready:'mig-site-ready', 'cutover done':'mig-site-done', issue:'mig-site-issue' }
+
+  return (
+    <div className="mig-step-body">
+      <p className="mig-step-desc">
+        For multi-site customers, plan each location separately — own hardware audit, IT contact, and cutover window.
+        Single-site customer? You can skip this step.
+      </p>
+      <div className="mig-field-group">
+        <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
+          Sites
+          {sites.length>0 && <span className="mig-count-badge">{sites.length}</span>}
+          <button type="button" className="btn btn-secondary"
+            style={{marginLeft:'auto',padding:'3px 10px',fontSize:12}}
+            onClick={()=>setShowAdd(v=>!v)}>
+            {showAdd?'Cancel':'+ Add site'}
+          </button>
+        </div>
+
+        {sites.length===0 && !showAdd && (
+          <div className="mig-sites-empty">
+            <p>No sites added — this is a single-site migration.</p>
+            <p style={{fontSize:12,color:'var(--muted)',margin:'4px 0 16px'}}>
+              Add sites only if this customer has multiple physical locations.
+            </p>
+            <button type="button" className="btn btn-primary" onClick={()=>setShowAdd(true)}>+ Add first site</button>
+          </div>
+        )}
+
+        {showAdd && (
+          <div className="mig-site-add-form">
+            <div className="mig-field-row">
+              <Field label="Site name *"><MInput value={form.name} onChange={v=>setForm(f=>({...f,name:v}))} placeholder="Main Office"/></Field>
+              <Field label="IT Contact"><MInput value={form.contact} onChange={v=>setForm(f=>({...f,contact:v}))} placeholder="Contact name"/></Field>
+              <Field label="Contact email"><MInput value={form.contactEmail} onChange={v=>setForm(f=>({...f,contactEmail:v}))} placeholder="it@customer.com"/></Field>
+            </div>
+            <div className="mig-field-row">
+              <Field label="# Devices"><MInput value={form.deviceCount} onChange={v=>setForm(f=>({...f,deviceCount:v}))} placeholder="12"/></Field>
+              <Field label="Cutover date"><MInput type="date" value={form.cutoverDate} onChange={v=>setForm(f=>({...f,cutoverDate:v}))}/></Field>
+            </div>
+            <button type="button" className="btn btn-primary" onClick={addSite} disabled={!form.name.trim()}>Add site</button>
+          </div>
+        )}
+
+        {sites.map(site=>(
+          <div key={site.id} className="mig-site-card">
+            <div className="mig-site-card-header">
+              <span className="mig-site-name">📍 {site.name}</span>
+              <select className={`mig-site-status ${STATUS_CLASS[site.status]||''}`}
+                value={site.status} onChange={e=>updateSite(site.id,'status',e.target.value)}>
+                {STATUS_OPTS.map(o=><option key={o} value={o}>{o.charAt(0).toUpperCase()+o.slice(1)}</option>)}
+              </select>
+              <button type="button" className="mig-audit-del" onClick={()=>removeSite(site.id)}>✕</button>
+            </div>
+            <div className="mig-site-card-body">
+              <div className="mig-site-meta"><span>IT Contact</span><span>{site.contact||'—'}</span></div>
+              <div className="mig-site-meta"><span>Email</span><span>{site.contactEmail||'—'}</span></div>
+              <div className="mig-site-meta"><span>Devices</span><span>{site.deviceCount||'—'}</span></div>
+              <div className="mig-site-meta"><span>Cutover</span><span>{site.cutoverDate||'TBD'}</span></div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   )
 }
 
 /* ════════════════════════════════════════════════════════════
-   LIFECYCLE — Planning
+   PHASE 2 — Cutover steps
    ════════════════════════════════════════════════════════════ */
-function StepPlanning({ data, onChange }) {
-  const planning = data.planning || {}
-  const researchDone = checklistComplete(RESEARCH_CHECKS, data.research?.checks) && Boolean(data.research?.feasibility)
-  function set(field,value) { onChange({ ...data, planning:{ ...planning, [field]:value } }) }
-  function setChecks(checks) { onChange({ ...data, planning:{ ...planning, checks } }) }
+
+/* ── Step 9: Go / No-Go Gate ─────────────────────────────────── */
+function StepGoNoGo({ data, onChange }) {
+  const gng = data.gonogo || {}
+  const overrides = gng.overrides || {}
+
+  const checks = [
+    { key:'owner_set',       category:'Pre-Migration', label:'Migration owner assigned',                    auto:!!(data.kickoff?.owner) },
+    { key:'net_req_sent',    category:'Pre-Migration', label:'Network requirements sent to customer',       auto:!!(data.kickoff?.networkReqSent) },
+    { key:'cutover_date',    category:'Pre-Migration', label:'Cutover date confirmed',                      auto:!!(data.kickoff?.cutoverDate) },
+    { key:'hw_audit_done',   category:'Pre-Migration', label:'Hardware audit complete',                     auto:(data.hardwareAudit||[]).length>0 },
+    { key:'hw_audit_pass',   category:'Pre-Migration', label:'All devices pass firmware check',
+      auto:(data.hardwareAudit||[]).length>0 &&
+           (data.hardwareAudit||[]).every(d=>{ const s=auditDevice(d.model,d.currentFw); return s.status==='ok'||s.status==='unknown' }) },
+    { key:'feat_gaps_noted', category:'Pre-Migration', label:'Feature gaps identified and disclosed to customer',
+      auto:(()=>{
+        const inv = data.featureInventory||{}
+        const usedGaps = FEATURE_INVENTORY_ITEMS.filter(f=>f.status==='gap'&&inv[f.id]?.used)
+        return usedGaps.length===0 || usedGaps.every(f=>inv[f.id]?.notes?.trim())
+      })() },
+    { key:'users_done',      category:'Configuration', label:'Users and extensions configured',             auto:(data.users||[]).length>0 },
+    { key:'devices_done',    category:'Configuration', label:'Devices configured',                          auto:(data.devices||[]).length>0 },
+    { key:'system_done',     category:'Configuration', label:'System Config step fully checked off',
+      auto:SYSTEM_CONFIG_CHECKS.length>0 && SYSTEM_CONFIG_CHECKS.every(c=>!!(data.systemConfig||{})[c.key]) },
+    { key:'reviewer_set',    category:'QC',            label:'QC reviewer assigned',                       auto:!!(data.kickoff?.reviewerName)||!!(gng.reviewerName) },
+  ]
+
+  function getStatus(check) { return overrides[check.key] || check.auto }
+  const allPass = checks.every(c=>getStatus(c))
+  const reviewerName = gng.reviewerName || data.kickoff?.reviewerName || ''
+  function setGng(f,v) { onChange({ ...data, gonogo:{ ...gng, [f]:v } }) }
+  function toggleOverride(key) {
+    onChange({ ...data, gonogo:{ ...gng, overrides:{ ...overrides, [key]:!overrides[key] } } })
+  }
+  const categories = [...new Set(checks.map(c=>c.category))]
+
   return (
     <div className="mig-step-body">
-      <PhaseWarning>{!researchDone ? 'Research is incomplete. You can plan now, but resolve research findings before approving cutover.' : ''}</PhaseWarning>
-      <p className="mig-step-desc">Turn research findings into an owned firmware, replacement, network, and cutover plan.</p>
+      <p className="mig-step-desc">
+        All items must pass before cutover is scheduled. Items are auto-derived from earlier steps. Manually override individual items if needed. Reviewer must sign off to unlock.
+      </p>
+      {categories.map(cat=>(
+        <div key={cat} className="mig-field-group">
+          <div className="mig-field-group-title">{cat}</div>
+          {checks.filter(c=>c.category===cat).map(check=>{
+            const pass = getStatus(check)
+            const manuallyOverridden = !!overrides[check.key] && !check.auto
+            return (
+              <div key={check.key} className={`mig-check-row${pass?' is-done':''}`}>
+                <div className={`mig-check-box${pass?' is-checked':''}`}>{pass?'✓':''}</div>
+                <div className="mig-check-content" style={{flex:1}}>
+                  <div className="mig-check-label">
+                    {check.label}
+                    {manuallyOverridden && <span style={{fontSize:10,color:'var(--muted)',marginLeft:8}}>(manually approved)</span>}
+                  </div>
+                </div>
+                {!check.auto && (
+                  <button type="button"
+                    className={`btn${overrides[check.key]?' btn-secondary':' btn-ghost'}`}
+                    style={{fontSize:11,padding:'2px 8px',flexShrink:0}}
+                    onClick={()=>toggleOverride(check.key)}>
+                    {overrides[check.key]?'Undo':'Override'}
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      ))}
       <div className="mig-field-group">
-        <div className="mig-field-group-title">Plan ownership</div>
+        <div className="mig-field-group-title">Reviewer Sign-off</div>
         <div className="mig-field-row">
-          <Field label="Migration owner"><MInput value={planning.owner||''} onChange={v=>set('owner',v)} placeholder="Technician / project owner"/></Field>
-          <Field label="Cutover window"><MInput value={planning.cutoverWindow||''} onChange={v=>set('cutoverWindow',v)} placeholder="Date, start time, duration"/></Field>
+          <Field label="Reviewer name">
+            <MInput value={gng.reviewerName||''} onChange={v=>setGng('reviewerName',v)} placeholder={data.kickoff?.reviewerName||'Reviewer name'}/>
+          </Field>
+        </div>
+        <div className={`mig-check-row${gng.reviewerSignoff?' is-done':''}`}
+          style={{cursor:allPass&&reviewerName?'pointer':'not-allowed', opacity:allPass&&reviewerName?1:0.5}}
+          onClick={()=>{ if(allPass&&reviewerName) setGng('reviewerSignoff',!gng.reviewerSignoff) }}>
+          <div className={`mig-check-box${gng.reviewerSignoff?' is-checked':''}`}>{gng.reviewerSignoff?'✓':''}</div>
+          <div className="mig-check-content">
+            <div className="mig-check-label">
+              {reviewerName ? `${reviewerName} signs off — system is ready for cutover` : 'Enter reviewer name above to enable sign-off'}
+            </div>
+            {!allPass && <div className="mig-check-detail">Complete all checklist items above first</div>}
+          </div>
+        </div>
+        {gng.reviewerSignoff && (
+          <div className="mig-audit-banner is-ok" style={{marginTop:8}}>✓ Go/No-Go gate cleared. Proceed to Cutover Runbook.</div>
+        )}
+        {!gng.reviewerSignoff && allPass && reviewerName && (
+          <div className="mig-audit-banner is-warn" style={{marginTop:8}}>All checks pass — reviewer must click above to sign off.</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ── Step 10: Cutover Runbook ────────────────────────────────── */
+function StepRunbook({ data, onChange }) {
+  const items = data.runbook || []
+  function init() {
+    onChange({ ...data, runbook:RUNBOOK_DEFAULTS.map(r=>({...r,id:makeId(),done:false,notes:''})) })
+  }
+  function toggle(id) { onChange({ ...data, runbook:items.map(r=>r.id===id?{...r,done:!r.done}:r) }) }
+  function setNotes(id,val) { onChange({ ...data, runbook:items.map(r=>r.id===id?{...r,notes:val}:r) }) }
+  function updateItem(id,field,val) { onChange({ ...data, runbook:items.map(r=>r.id===id?{...r,[field]:val}:r) }) }
+  function removeItem(id) { onChange({ ...data, runbook:items.filter(r=>r.id!==id) }) }
+  function addCustom() { onChange({ ...data, runbook:[...items,{id:makeId(),time:'',task:'',done:false,notes:''}] }) }
+  const doneCount = items.filter(r=>r.done).length
+
+  if (!items.length) return (
+    <div className="mig-step-body">
+      <p className="mig-step-desc">A day-of checklist keeps the cutover on track. Load the standard runbook or start from scratch.</p>
+      <div className="mig-field-group">
+        <div className="mig-sites-empty">
+          <p>No runbook yet.</p>
+          <div style={{display:'flex',gap:8,justifyContent:'center',marginTop:12}}>
+            <button type="button" className="btn btn-primary" onClick={init}>Load standard runbook</button>
+            <button type="button" className="btn btn-secondary" onClick={addCustom}>Start blank</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="mig-step-body">
+      <p className="mig-step-desc">Check off each item on cutover day. Time offsets are relative to T+0:00 (port activation / cutover start).</p>
+      <div className="mig-build-progress" style={{marginBottom:16}}>
+        <div className="mig-progress-bar-wrap">
+          <div className="mig-progress-bar" style={{width:`${Math.round((doneCount/Math.max(items.length,1))*100)}%`}}/>
+        </div>
+        <div className="mig-progress-label">{doneCount} of {items.length} done</div>
+      </div>
+      <div className="mig-field-group">
+        <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
+          Runbook
+          <button type="button" className="btn btn-secondary" style={{marginLeft:'auto',padding:'3px 10px',fontSize:12}} onClick={addCustom}>+ Add item</button>
+        </div>
+        {items.map(r=>(
+          <div key={r.id} className={`mig-check-row${r.done?' is-done':''}`} style={{alignItems:'flex-start',gap:10}}>
+            <div className={`mig-check-box${r.done?' is-checked':''}`}
+              style={{marginTop:2,cursor:'pointer',flexShrink:0}} onClick={()=>toggle(r.id)}>{r.done?'✓':''}</div>
+            <div style={{flex:1}}>
+              <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                <input className="mns-input" style={{width:70,fontSize:12}} value={r.time} onChange={e=>updateItem(r.id,'time',e.target.value)} placeholder="T+0:00"/>
+                <input className="mns-input" style={{flex:1,fontSize:12}} value={r.task} onChange={e=>updateItem(r.id,'task',e.target.value)} placeholder="Task description"/>
+                <button type="button" className="mig-audit-del" onClick={()=>removeItem(r.id)}>✕</button>
+              </div>
+              {!r.done && (
+                <input className="mns-input" style={{width:'100%',fontSize:11,marginTop:4}}
+                  value={r.notes||''} onChange={e=>setNotes(r.id,e.target.value)} placeholder="Notes..."/>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/* ── Step 11: Phone Online Tracker ───────────────────────────── */
+function StepPhoneTracker({ data, onChange }) {
+  const tracked = data.phoneTracker || []
+
+  function populate() {
+    const existing = new Set(tracked.map(t=>t.mac||t.ext).filter(Boolean))
+    const extByDN = {}
+    ;(data.users||[]).forEach(u=>{ if(u.dn) extByDN[u.dn]=u.ext||'' })
+    const toAdd = (data.devices||[]).filter(d=>!existing.has(d.mac||d.dn))
+    const newItems = toAdd.map(d=>({
+      id:makeId(), mac:d.mac||'', model:d.model||'',
+      ext:d.line1||extByDN[d.dn]||'', name:d.notes||d.dn||'',
+      online:false, notes:'',
+    }))
+    onChange({ ...data, phoneTracker:[...tracked,...newItems] })
+  }
+  function toggle(id) { onChange({ ...data, phoneTracker:tracked.map(t=>t.id===id?{...t,online:!t.online}:t) }) }
+  function setNotes(id,val) { onChange({ ...data, phoneTracker:tracked.map(t=>t.id===id?{...t,notes:val}:t) }) }
+  function remove(id) { onChange({ ...data, phoneTracker:tracked.filter(t=>t.id!==id) }) }
+  function add() { onChange({ ...data, phoneTracker:[...tracked,{id:makeId(),mac:'',model:'',ext:'',name:'',online:false,notes:''}] }) }
+  function updateField(id,f,v) { onChange({ ...data, phoneTracker:tracked.map(t=>t.id===id?{...t,[f]:v}:t) }) }
+
+  const onlineCount = tracked.filter(t=>t.online).length
+  const offlineCount = tracked.length-onlineCount
+
+  return (
+    <div className="mig-step-body">
+      <p className="mig-step-desc">Check off each phone as it comes online on cutover day. Sync from Devices to auto-populate.</p>
+      {tracked.length>0 && (
+        <div className="mig-build-progress" style={{marginBottom:16}}>
+          <div className="mig-progress-bar-wrap">
+            <div className="mig-progress-bar" style={{width:`${Math.round((onlineCount/Math.max(tracked.length,1))*100)}%`}}/>
+          </div>
+          <div className="mig-progress-label">
+            {onlineCount} of {tracked.length} phones online{offlineCount>0?` — ${offlineCount} remaining`:''}
+          </div>
+        </div>
+      )}
+      <div className="mig-field-group">
+        <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
+          Phones
+          <span className="mig-count-badge">{tracked.length}</span>
+          <div style={{marginLeft:'auto',display:'flex',gap:8}}>
+            {(data.devices||[]).length>0 && (
+              <button type="button" className="btn btn-secondary" style={{padding:'3px 10px',fontSize:12}} onClick={populate}>
+                ↻ Sync from Devices
+              </button>
+            )}
+            <button type="button" className="btn btn-secondary" style={{padding:'3px 10px',fontSize:12}} onClick={add}>+ Add</button>
+          </div>
+        </div>
+        {tracked.length===0 && (
+          <div className="mig-sites-empty">
+            <p>No phones added.</p>
+            {(data.devices||[]).length>0
+              ? <button type="button" className="btn btn-primary" onClick={populate}>Sync from Devices step ({data.devices.length} devices)</button>
+              : <p style={{fontSize:12,color:'var(--muted)'}}>Add devices in the Devices step first, or add phones manually here.</p>
+            }
+          </div>
+        )}
+        {tracked.map(t=>(
+          <div key={t.id} className={`mig-check-row${t.online?' is-done':''}`} style={{alignItems:'center',gap:8,flexWrap:'wrap'}}>
+            <div className={`mig-check-box${t.online?' is-checked':''}`} style={{cursor:'pointer',flexShrink:0}} onClick={()=>toggle(t.id)}>{t.online?'✓':''}</div>
+            <input className="mns-input" style={{width:64,fontSize:12}} value={t.ext} onChange={e=>updateField(t.id,'ext',e.target.value)} placeholder="Ext"/>
+            <input className="mns-input" style={{flex:1,minWidth:100,fontSize:12}} value={t.name} onChange={e=>updateField(t.id,'name',e.target.value)} placeholder="Name / DN"/>
+            <input className="mns-input" style={{width:130,fontSize:12}} value={t.model} onChange={e=>updateField(t.id,'model',e.target.value)} placeholder="Model"/>
+            <input className="mns-input" style={{width:130,fontSize:12}} value={t.mac} onChange={e=>updateField(t.id,'mac',e.target.value)} placeholder="MAC"/>
+            {!t.online && (
+              <input className="mns-input" style={{flex:1,minWidth:80,fontSize:11}} value={t.notes||''} onChange={e=>setNotes(t.id,e.target.value)} placeholder="Issue..."/>
+            )}
+            <span style={{fontSize:12,fontWeight:600,color:t.online?'var(--ok)':'var(--muted)',width:52,textAlign:'right',flexShrink:0}}>
+              {t.online?'Online':'Offline'}
+            </span>
+            <button type="button" className="mig-audit-del" onClick={()=>remove(t.id)}>✕</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/* ════════════════════════════════════════════════════════════
+   PHASE 3 — Post-Cutover steps
+   ════════════════════════════════════════════════════════════ */
+
+/* ── Step 12: Test Calls ─────────────────────────────────────── */
+function StepTestCalls({ data, onChange }) {
+  const tc = data.testCalls || {}
+  function setResult(key,field,val) {
+    onChange({ ...data, testCalls:{ ...tc, [key]:{ ...(tc[key]||{}), [field]:val } } })
+  }
+  const passCount = TEST_CALL_ITEMS.filter(t=>tc[t.key]?.passed===true).length
+  const failCount = TEST_CALL_ITEMS.filter(t=>tc[t.key]?.passed===false).length
+
+  return (
+    <div className="mig-step-body">
+      <p className="mig-step-desc">After cutover, run every test. Mark pass or fail. Document issues so they can be tracked to resolution.</p>
+      {failCount>0 && (
+        <div className="mig-audit-banner is-fail">✕ {failCount} test{failCount!==1?'s':''} failing — resolve before closing the job.</div>
+      )}
+      {!failCount && passCount===TEST_CALL_ITEMS.length && (
+        <div className="mig-audit-banner is-ok">✓ All {TEST_CALL_ITEMS.length} tests passed.</div>
+      )}
+      <div className="mig-field-group">
+        <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
+          Test Call Log
+          <span className="mig-count-badge">{passCount}/{TEST_CALL_ITEMS.length}</span>
+        </div>
+        {TEST_CALL_ITEMS.map(item=>{
+          const entry = tc[item.key]||{}
+          const passed = entry.passed
+          return (
+            <div key={item.key} className={`mig-check-row${passed===true?' is-done':passed===false?' is-fail-row':''}`} style={{alignItems:'flex-start',gap:10}}>
+              <div style={{display:'flex',gap:4,flexShrink:0,marginTop:2}}>
+                <button type="button" className={`mig-pass-btn${passed===true?' is-active':''}`} title="Pass"
+                  onClick={()=>setResult(item.key,'passed',passed===true?null:true)}>✓</button>
+                <button type="button" className={`mig-fail-btn${passed===false?' is-active':''}`} title="Fail"
+                  onClick={()=>setResult(item.key,'passed',passed===false?null:false)}>✕</button>
+              </div>
+              <div style={{flex:1}}>
+                <div className="mig-check-label">{item.label}</div>
+                <div className="mig-check-detail">{item.detail}</div>
+                {passed===false && (
+                  <input className="mns-input" style={{width:'100%',fontSize:11,marginTop:4}}
+                    value={entry.notes||''} onChange={e=>setResult(item.key,'notes',e.target.value)}
+                    placeholder="Describe the issue..."/>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/* ── Step 13: Customer Sign-off ──────────────────────────────── */
+function StepSignoff({ data, onChange }) {
+  const s = data.signoff || {}
+  function set(f,v) { onChange({ ...data, signoff:{ ...s, [f]:v } }) }
+  const tc = data.testCalls || {}
+  const allTestsPassed = TEST_CALL_ITEMS.every(t=>tc[t.key]?.passed===true)
+  const onlineCount = (data.phoneTracker||[]).filter(t=>t.online).length
+  const totalPhones = (data.phoneTracker||[]).length
+
+  return (
+    <div className="mig-step-body">
+      <p className="mig-step-desc">Final step. Get the customer's formal sign-off confirming the system is working before the job is closed.</p>
+      <div className="mig-field-group">
+        <div className="mig-field-group-title">Pre-Sign-off Summary</div>
+        <div className={`mig-check-row${allTestsPassed?' is-done':''}`}>
+          <div className={`mig-check-box${allTestsPassed?' is-checked':''}`}>{allTestsPassed?'✓':''}</div>
+          <div className="mig-check-content"><div className="mig-check-label">All test calls passed</div></div>
+        </div>
+        <div className={`mig-check-row${totalPhones>0&&onlineCount===totalPhones?' is-done':''}`}>
+          <div className={`mig-check-box${totalPhones>0&&onlineCount===totalPhones?' is-checked':''}`}>
+            {totalPhones>0&&onlineCount===totalPhones?'✓':''}
+          </div>
+          <div className="mig-check-content">
+            <div className="mig-check-label">All phones online {totalPhones>0?`(${onlineCount}/${totalPhones})`:''}</div>
+          </div>
         </div>
       </div>
       <div className="mig-field-group">
-        <div className="mig-field-group-title">Remediation and cutover plan</div>
-        <Field label="Firmware update plan"><MTextarea value={planning.firmwarePlan||''} onChange={v=>set('firmwarePlan',v)} placeholder="Models/counts, current → target, pilot phone, method, maintenance window, rollback"/></Field>
-        <Field label="End-of-life replacement plan"><MTextarea value={planning.replacementPlan||''} onChange={v=>set('replacementPlan',v)} placeholder="Models/counts, replacements, procurement owner and due date"/></Field>
-        <Field label="Customer network instructions"><MTextarea value={planning.networkPlan||''} onChange={v=>set('networkPlan',v)} placeholder="QoS, firewall, VLAN, cabling, responsible party, due date"/></Field>
-        <Field label="Rollback plan"><MTextarea value={planning.rollbackPlan||''} onChange={v=>set('rollbackPlan',v)} placeholder="Trigger, decision owner, steps, rollback deadline"/></Field>
-        <Field label="Dependencies"><MTextarea value={planning.dependencies||''} onChange={v=>set('dependencies',v)} placeholder="Porting, ISP, hardware arrival, customer availability…"/></Field>
+        <div className="mig-field-group-title">Customer Sign-off</div>
+        <div className="mig-field-row">
+          <Field label="Customer representative name">
+            <MInput value={s.customerName||''} onChange={v=>set('customerName',v)} placeholder="Customer's name"/>
+          </Field>
+          <Field label="Sign-off date">
+            <MInput type="date" value={s.signedAt||''} onChange={v=>set('signedAt',v)}/>
+          </Field>
+        </div>
+        <Field label="Notes">
+          <textarea className="mns-input mig-textarea" rows={3}
+            value={s.notes||''} onChange={e=>set('notes',e.target.value)}
+            placeholder="Outstanding items, follow-ups, or notes..."/>
+        </Field>
       </div>
-      <div className="mig-field-group">
-        <div className="mig-field-group-title">Planning checklist</div>
-        <ChecklistPanel items={PLANNING_CHECKS} values={planning.checks||{}} onChange={setChecks}/>
-      </div>
-      <Field label="Planning notes"><MTextarea value={planning.notes||''} onChange={v=>set('notes',v)} placeholder="Approvals, exceptions, and decisions"/></Field>
+      {s.customerName && s.signedAt && (
+        <div className="mig-audit-banner is-ok" style={{fontSize:13,marginTop:8}}>
+          ✓ Migration complete — signed off by {s.customerName} on {new Date(s.signedAt+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}.
+        </div>
+      )}
     </div>
   )
 }
@@ -681,6 +997,8 @@ function StepAccount({ data, onChange }) {
    ════════════════════════════════════════════════════════════ */
 function StepUsers({ data, onChange }) {
   const [importLog, setImportLog] = useState([])
+  const [bulkText, setBulkText] = useState('')
+  const [bulkMsg, setBulkMsg] = useState('')
 
   function handleCSV(rows, filename) {
     const type = detectType(rows)
@@ -692,6 +1010,8 @@ function StepUsers({ data, onChange }) {
       .map(ln => migrationUserFromLine(ln, { id:makeId() }))
       .filter(Boolean)
     onChange({ ...data, users })
+    setBulkText('')
+    setBulkMsg('')
     setImportLog(l=>[...l.slice(-2), `${users.length} users imported from "${filename}" — enter each NetSapiens extension below`])
   }
 
@@ -700,10 +1020,32 @@ function StepUsers({ data, onChange }) {
     () => analyzeMigrationExtensions(extRows),
     [extRows],
   )
+  const bulkExtensions = useMemo(() => parseBulkExtensions(bulkText), [bulkText])
+  const bulkPreview = useMemo(
+    () => previewBulkExtensionApply(extRows, bulkExtensions),
+    [extRows, bulkExtensions],
+  )
 
   function updateUser(id, f, v) { onChange({ ...data, users:(data.users||[]).map(u=>u.id===id?{...u,[f]:v}:u) }) }
   function addUser() { onChange({ ...data, users:[...(data.users||[]),{id:makeId(),dn:'',ext:'',firstName:'',lastName:'-',email:'',vmPin:'',dept:'',site:'',did:''}] }) }
   function removeUser(id) { onChange({ ...data, users:(data.users||[]).filter(u=>u.id!==id) }) }
+
+  function applyBulk() {
+    if (!bulkPreview.canApply) {
+      setBulkMsg(bulkPreview.warning)
+      return
+    }
+    onChange({ ...data, users: applyBulkExtensions(extRows, bulkExtensions) })
+    setBulkMsg(`Applied ${bulkExtensions.length} extension${bulkExtensions.length===1?'':'s'} in user order.`)
+  }
+
+  function focusNextExtension(index) {
+    const next = document.querySelector(`[data-mig-ext-index="${index + 1}"]`)
+    if (next) {
+      next.focus()
+      next.select?.()
+    }
+  }
 
   const SCOPES = ['Basic User','Simple User','Call Center Agent','Call Center Supervisor','Office Manager','Site Manager']
 
@@ -724,6 +1066,44 @@ function StepUsers({ data, onChange }) {
           </div>
         )}
       </div>
+
+      {extRows.length > 0 && (
+        <div className="mig-field-group">
+          <div className="mig-field-group-title">Bulk Extensions</div>
+          <p className="mig-hint">Paste one extension per line in the same order as the users below. Counts must match before apply.</p>
+          <textarea
+            className="mig-textarea"
+            rows={Math.min(8, Math.max(3, extRows.length))}
+            value={bulkText}
+            onChange={e=>{ setBulkText(e.target.value); setBulkMsg('') }}
+            placeholder={'1001\n1002\n1003'}
+          />
+          <div className="mig-bulk-meta">
+            <span>{bulkPreview.extensionCount} extension{bulkPreview.extensionCount===1?'':'s'} · {bulkPreview.userCount} user{bulkPreview.userCount===1?'':'s'}</span>
+            <button type="button" className="btn btn-secondary" disabled={!bulkPreview.canApply} onClick={applyBulk}>
+              Apply to users
+            </button>
+          </div>
+          {bulkPreview.warning && <div className="mns-error" style={{marginTop:8}}>{bulkPreview.warning}</div>}
+          {!bulkPreview.warning && bulkMsg && <div className="mig-ok-msg" style={{marginTop:8}}>{bulkMsg}</div>}
+          {bulkPreview.canApply && bulkPreview.preview.length > 0 && (
+            <div className="mig-bulk-preview">
+              {bulkPreview.preview.slice(0, 5).map(row => (
+                <div key={row.id} className="mig-bulk-preview-row">
+                  <span className="mns-td-mono">{row.dn || '—'}</span>
+                  <span>{row.name}</span>
+                  <span className="mns-td-mono">{row.currentExt || '—'}</span>
+                  <span>→</span>
+                  <span className="mns-td-mono">{row.nextExt}</span>
+                </div>
+              ))}
+              {bulkPreview.preview.length > 5 && (
+                <div className="mns-hint">…and {bulkPreview.preview.length - 5} more</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mig-field-group">
         <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
@@ -753,7 +1133,7 @@ function StepUsers({ data, onChange }) {
                   <th>Email</th><th>Dept</th><th>Scope</th><th></th>
                 </tr></thead>
                 <tbody>
-                  {extRows.map(u => {
+                  {extRows.map((u, index) => {
                     const clash = collisions.has(u.ext)
                     const missing = missingIds.has(u.id)
                     return (
@@ -762,8 +1142,15 @@ function StepUsers({ data, onChange }) {
                         <td>
                           <input
                             className={`mns-ext-input${clash||missing?' is-collision':''}`}
+                            data-mig-ext-index={index}
                             value={u.ext||''}
                             onChange={e=>updateUser(u.id,'ext',normalizeMigrationExtension(e.target.value))}
+                            onKeyDown={e=>{
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                focusNextExtension(index)
+                              }
+                            }}
                             placeholder="Required"
                             inputMode="numeric"
                           />
@@ -798,7 +1185,6 @@ function StepUsers({ data, onChange }) {
    ════════════════════════════════════════════════════════════ */
 function StepDevices({ data, onChange }) {
   const [importLog, setImportLog] = useState([])
-  const [auditImportLog, setAuditImportLog] = useState([])
 
   // Only explicitly entered extensions may be assigned to devices.
   const extByDN = useMemo(() => extensionsByDn(data.users), [data.users])
@@ -806,22 +1192,10 @@ function StepDevices({ data, onChange }) {
     () => analyzeDeviceExtensionAssignments(data.devices, extByDN),
     [data.devices, extByDN],
   )
-  const approvedSharedExtensions = useMemo(() => new Set(
-    [...duplicateExtensions].filter(ext =>
-      (data.sharedDeviceApprovals||[]).includes(approvalKeys[ext])),
-  ), [duplicateExtensions, approvalKeys, data.sharedDeviceApprovals])
-  const unresolvedSharedExtensions = useMemo(() => new Set(
-    [...duplicateExtensions].filter(ext => !approvedSharedExtensions.has(ext)),
-  ), [duplicateExtensions, approvedSharedExtensions])
-  const auditRows = useMemo(
-    () => buildYealinkServerAudit(data.yealinkServerDevices || [], data.devices || []),
-    [data.yealinkServerDevices, data.devices],
+  const approvedKeys = new Set(data.sharedDeviceApprovals || [])
+  const unapprovedExtensions = new Set(
+    [...duplicateExtensions].filter(ext => !approvedKeys.has(approvalKeys[ext])),
   )
-  const auditExceptions = useMemo(() => yealinkAuditExceptions(auditRows), [auditRows])
-  const auditCounts = useMemo(() => auditRows.reduce((counts, row) => {
-    counts[row.category] = (counts[row.category] || 0) + 1
-    return counts
-  }, {}), [auditRows])
 
   function handleCSV(rows, filename) {
     const type = detectType(rows)
@@ -837,58 +1211,20 @@ function StepDevices({ data, onChange }) {
       const dn = normDN(d['Subscriber Directory Number'])
       return { id:makeId(), mac, model, dn, line1:'', line2:'', notes:d['Description']||'' }
     }).filter(Boolean)
-    onChange({ ...data, devices })
+    onChange({ ...data, devices, sharedDeviceApprovals:[] })
     setImportLog(l=>[...l.slice(-2), `${devices.length} devices imported from "${filename}"`])
-  }
-
-  function handleYealinkCSV(rows, filename) {
-    const type = detectType(rows)
-    if (type !== 'yealink-server') {
-      setAuditImportLog([`"${filename}" — not a Yealink server phone export`])
-      return
-    }
-    const yealinkServerDevices = rows
-      .map(row => yealinkServerDeviceFromRow(row, { id:makeId() }))
-      .filter(Boolean)
-    onChange({ ...data, yealinkServerDevices, yealinkAuditFileName:filename })
-    setAuditImportLog([`${yealinkServerDevices.length} server devices loaded from "${filename}"`])
-  }
-
-  function clearYealinkAudit() {
-    onChange({ ...data, yealinkServerDevices:[], yealinkAuditFileName:'' })
-    setAuditImportLog([])
-  }
-
-  function setSharedExtensionApproved(extension, approved) {
-    const prefix = `${normalizeMigrationExtension(extension)}|`
-    const next = (data.sharedDeviceApprovals||[]).filter(key => !key.startsWith(prefix))
-    if (approved && approvalKeys[extension]) next.push(approvalKeys[extension])
-    onChange({ ...data, sharedDeviceApprovals:next })
-  }
-
-  function downloadAuditChecklist() {
-    const columns = [
-      'Category','MAC','Model','Device Status','Last Report','SIP Accounts',
-      'In Migration','Duplicate Accounts','Recommended Action',
-    ]
-    const rows = auditExceptions.map(row => ({
-      'Category':row.categoryLabel,
-      'MAC':row.mac,
-      'Model':row.model,
-      'Device Status':row.status,
-      'Last Report':row.lastReport,
-      'SIP Accounts':(row.accounts||[]).map(a=>a.info).join('; '),
-      'In Migration':row.inMigration?'yes':'no',
-      'Duplicate Accounts':(row.duplicateAccounts||[]).join('; '),
-      'Recommended Action':row.action,
-    }))
-    const domain = data.domain || 'migration'
-    downloadCSV(`yealink_server_review_${domain}.csv`, toCSV(columns, rows))
   }
 
   function updateDevice(id, f, v) { onChange({ ...data, devices:data.devices.map(d=>d.id===id?{...d,[f]:v}:d) }) }
   function addDevice() { onChange({ ...data, devices:[...(data.devices||[]),{id:makeId(),mac:'',model:'',dn:'',line1:'',line2:'',notes:''}] }) }
   function removeDevice(id) { onChange({ ...data, devices:(data.devices||[]).filter(d=>d.id!==id) }) }
+  function setSharedExtensionApproved(extension, approved) {
+    const key = approvalKeys[extension]
+    const next = new Set(data.sharedDeviceApprovals || [])
+    if (approved) next.add(key)
+    else next.delete(key)
+    onChange({ ...data, sharedDeviceApprovals:[...next] })
+  }
 
   return (
     <div className="mig-step-body">
@@ -912,42 +1248,25 @@ function StepDevices({ data, onChange }) {
         <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
           Devices
           <span className="mig-count-badge">{(data.devices||[]).length}</span>
-          {unresolvedSharedExtensions.size > 0 && (
+          {unapprovedExtensions.size > 0 && (
             <span className="mig-warn-badge">
-              {unresolvedSharedExtensions.size} shared extension{unresolvedSharedExtensions.size>1?'s':''} to review
+              {unapprovedExtensions.size} shared extension{unapprovedExtensions.size>1?'s':''}
             </span>
           )}
-          {approvedSharedExtensions.size > 0 && (
-            <span className="mig-ok-badge">{approvedSharedExtensions.size} approved</span>
+          {duplicateExtensions.size > 0 && unapprovedExtensions.size === 0 && (
+            <span className="mig-ok-badge">Shared phones approved</span>
           )}
         </div>
-        {unresolvedSharedExtensions.size > 0 && (
-          <div className="mns-error" style={{marginBottom:10}}>
-            {[...unresolvedSharedExtensions].map(ext => (
-              <div key={ext} className="mig-shared-review-row">
-                <span>Extension {ext} is assigned to {deviceCounts[ext]} devices.</span>
-                <label className="mig-shared-check">
-                  <input
-                    type="checkbox"
-                    checked={false}
-                    onChange={event=>setSharedExtensionApproved(ext,event.target.checked)}
-                  />
-                  Expected — user has multiple active phones
-                </label>
-              </div>
-            ))}
-          </div>
-        )}
-        {approvedSharedExtensions.size > 0 && (
-          <div className="mig-shared-approved" style={{marginBottom:10}}>
-            {[...approvedSharedExtensions].map(ext => (
-              <label key={ext} className="mig-shared-check">
+        {duplicateExtensions.size > 0 && (
+          <div className={unapprovedExtensions.size > 0?'mns-error':'mig-shared-approved'} style={{marginBottom:10}}>
+            {[...duplicateExtensions].map(ext => (
+              <label key={ext} className="mig-shared-review-row">
                 <input
                   type="checkbox"
-                  checked
-                  onChange={event=>setSharedExtensionApproved(ext,event.target.checked)}
+                  checked={approvedKeys.has(approvalKeys[ext])}
+                  onChange={e=>setSharedExtensionApproved(ext,e.target.checked)}
                 />
-                Extension {ext} approved on {deviceCounts[ext]} active phones
+                Extension {ext} is assigned to {deviceCounts[ext]} devices. This is intentional.
               </label>
             ))}
           </div>
@@ -961,7 +1280,8 @@ function StepDevices({ data, onChange }) {
                   const autoExt = d.dn ? extByDN[d.dn] || '' : ''
                   const l1 = d.line1 || autoExt
                   const l2 = data.line2 ? (d.line2 || l1) : d.line2
-                  const sharedExtension = unresolvedSharedExtensions.has(normalizeMigrationExtension(l1))
+                  const extension = normalizeMigrationExtension(l1)
+                  const sharedExtension = unapprovedExtensions.has(extension)
                   return (
                     <tr key={d.id} className={sharedExtension?'mns-row-collision':''}>
                       <td><input className="mig-cell-input mig-cell-mono" value={d.mac} onChange={e=>updateDevice(d.id,'mac',e.target.value)} placeholder="aabbccddeeff"/></td>
@@ -982,475 +1302,72 @@ function StepDevices({ data, onChange }) {
         )}
         <button type="button" className="btn btn-secondary" style={{marginTop:data.devices?.length?8:0}} onClick={addDevice}>+ Add device</button>
       </div>
-
-      <div className="mig-field-group">
-        <div className="mig-field-group-title">Yealink Server Audit <span className="mig-optional-label">Optional</span></div>
-        <p className="mig-hint">
-          Compare the Yealink server inventory to this migration by MAC address. This is review-only and never deletes a server device.
-        </p>
-        <div className="mns-slots">
-          <UploadSlot
-            label="Yealink Phone List CSV"
-            hint="MAC + Device Status + Last Report Time"
-            loaded={(data.yealinkServerDevices||[]).length>0}
-            count={(data.yealinkServerDevices||[]).length}
-            onFile={(rows,name)=>handleYealinkCSV(rows,name)}
-          />
-        </div>
-        {auditImportLog.length > 0 && (
-          <div className="mns-detect-log" style={{marginTop:8}}>
-            {auditImportLog.map((message,index)=><span key={index} className="mns-detect-chip">✓ {message}</span>)}
-          </div>
-        )}
-
-        {auditRows.length > 0 && (
-          <div className="mig-audit-results">
-            <div className="mig-audit-summary" aria-label="Yealink audit summary">
-              {[
-                ['ready','Ready'],
-                ['verify','Verify'],
-                ['investigate','Investigate'],
-                ['cleanup','Cleanup'],
-                ['strongCleanup','Strong cleanup'],
-              ].map(([key,label]) => (
-                <div key={key} className={`mig-audit-count is-${key}`}>
-                  <strong>{auditCounts[key]||0}</strong>
-                  <span>{label}</span>
-                </div>
-              ))}
-            </div>
-
-            <div className="mig-audit-actions">
-              <span className="mig-hint">
-                {auditExceptions.length} device{auditExceptions.length===1?'':'s'} need review
-                {data.yealinkAuditFileName ? ` · ${data.yealinkAuditFileName}` : ''}
-              </span>
-              <button type="button" className="btn btn-primary" onClick={downloadAuditChecklist} disabled={!auditExceptions.length}>
-                Download review checklist
-              </button>
-              <button type="button" className="btn btn-secondary" onClick={clearYealinkAudit}>
-                Clear audit
-              </button>
-            </div>
-
-            <div className="mig-table-wrap">
-              <table className="mns-table mig-audit-table">
-                <thead>
-                  <tr>
-                    <th>Recommendation</th><th>MAC</th><th>Model</th><th>Status</th>
-                    <th>Last report</th><th>SIP account(s)</th><th>Migration</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {auditRows.map(row => (
-                    <tr key={row.id||row.mac} className={`mig-audit-row is-${row.category}`}>
-                      <td>
-                        <span className={`mig-audit-status is-${row.category}`}>{row.categoryLabel}</span>
-                        <div className="mig-audit-action">{row.action}</div>
-                        {row.duplicateAccounts?.length > 0 && (
-                          <div className="mig-audit-duplicate">
-                            Duplicate SIP account: {row.duplicateAccounts.join(', ')}
-                          </div>
-                        )}
-                      </td>
-                      <td className="mns-td-mono">{row.mac}</td>
-                      <td>{row.model||'—'}</td>
-                      <td>{row.status||'unknown'}</td>
-                      <td>{row.lastReport||'—'}</td>
-                      <td>
-                        {(row.accounts||[]).length
-                          ? row.accounts.map(a=>`${a.info}${a.status?` (${a.status})`:''}`).join(', ')
-                          : 'None'}
-                      </td>
-                      <td>{row.inMigration?'Included':'Not included'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/* ── Button Layout split-panel ────────────────────────────── */
-function BLPanel({ layouts, users = [], onAdd, onUpdate, onRemove, onAutoPopulate }) {
-  const [selectedId, setSelectedId] = useState(layouts[0]?.id || null)
-  const selected = layouts.find(bl => bl.id === selectedId) || layouts[0] || null
-
-  function handleAdd() { onAdd() }
-
-  useEffect(() => {
-    if (!selected && layouts.length) setSelectedId(layouts[0].id)
-    if (selected && !layouts.find(bl => bl.id === selected.id)) {
-      setSelectedId(layouts[0]?.id || null)
-    }
-  }, [layouts])
-
-  // Count users not yet in layouts
-  const existingExts = new Set(layouts.map(b => b.extension).filter(Boolean))
-  const missingCount = users.filter(u => u.ext && !existingExts.has(u.ext)).length
-
-  return (
-    <div className="mig-sys-panel">
-      {/* Auto-populate bar */}
-      {users.length > 0 && (
-        <div className="mig-bl-auto-bar">
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={missingCount === 0}
-            onClick={onAutoPopulate}
-          >
-            {missingCount === 0
-              ? '✓ All users added'
-              : `Auto-populate ${missingCount} phone${missingCount !== 1 ? 's' : ''} from users`}
-          </button>
-          {layouts.length > 0 && missingCount > 0 && (
-            <span className="mns-hint">Adds missing only — existing entries are kept.</span>
-          )}
-        </div>
-      )}
-
-      <div className="mig-bl-split">
-        {/* Left: extension list */}
-        <div className="mig-bl-list">
-          {layouts.map(bl => (
-            <button key={bl.id} type="button"
-              className={`mig-bl-list-item${bl.id===selected?.id?' is-active':''}`}
-              onClick={()=>setSelectedId(bl.id)}>
-              <span className="mig-bl-item-ext">{bl.extension||<span style={{opacity:.4}}>No ext</span>}</span>
-              <div className="mig-bl-item-meta">
-                {bl.name && <span className="mig-bl-item-name">{bl.name}</span>}
-                <span>
-                  {(bl.pages||[]).reduce((s,p)=>s+(p.keys||[]).length,0)} keys
-                  {(bl.pages||[]).length > 1 ? `, ${(bl.pages||[]).length} pages` : ''}
-                </span>
-              </div>
-            </button>
-          ))}
-          <button type="button" className="mig-bl-add-btn" onClick={handleAdd}>+ Add phone</button>
-        </div>
-
-        {/* Right: editor */}
-        {selected ? (
-          <div className="mig-bl-editor">
-            <div className="mig-bl-editor-head">
-              <div style={{flex:1}}>
-                <input className="mig-card-title-input" style={{width:'100%'}}
-                  value={selected.extension}
-                  onChange={e=>onUpdate(selected.id,'extension',e.target.value)}
-                  placeholder="Extension (e.g. 1001)"/>
-                {selected.name && (
-                  <div style={{fontSize:12,color:'var(--muted)',marginTop:2}}>{selected.name}</div>
-                )}
-              </div>
-              <button type="button" className="mig-del-btn" style={{marginLeft:8}}
-                onClick={()=>onRemove(selected.id)}>Remove phone</button>
-            </div>
-            <Field label="Key assignments">
-              <PagedKeyBuilder
-                pages={selected.pages||[{id:makeId(),label:'Page 1',keys:[]}]}
-                onChange={pages=>onUpdate(selected.id,'pages',pages)}/>
-            </Field>
-            <Field label="Sidecar / expansion notes" hint="e.g. EXP50 attached — 20 BLF keys">
-              <MInput value={selected.sidecarNotes||''} onChange={v=>onUpdate(selected.id,'sidecarNotes',v)} placeholder="EXP50 attached — 20 BLF keys"/>
-            </Field>
-          </div>
-        ) : (
-          <div className="mig-bl-empty">
-            {users.length > 0
-              ? <>Click <strong>Auto-populate</strong> above to add all users, or <strong>+ Add phone</strong> to add one manually.</>
-              : <>No phones added yet — click <strong>+ Add phone</strong> to start.</>}
-          </div>
-        )}
-      </div>
     </div>
   )
 }
 
 /* ════════════════════════════════════════════════════════════
-   STEP 4 — System Config (AAs, Call Flows, Hunt Groups, Button Layouts)
+   STEP 4 — System Config (side-by-side Meta / NetSapiens checklist)
    ════════════════════════════════════════════════════════════ */
 function StepSystem({ data, onChange }) {
-  const [tab, setTab] = useState('aa')
-  const TABS = [
-    { id:'aa',  label:'Auto Attendants',    count:(data.autoAttendants||[]).length },
-    { id:'cf',  label:'Call Flows',         count:(data.callFlows||[]).length },
-    { id:'hg',  label:'Hunt Groups',        count:(data.huntGroups||[]).length },
-    { id:'bl',  label:'Button Layouts',     count:(data.buttonLayouts||[]).length },
-  ]
+  const checks = data.systemConfig || {}
+  const doneCount = SYSTEM_CONFIG_CHECKS.filter(item => !!checks[item.key]).length
 
-  function addAA()        { onChange({ ...data, autoAttendants:[...(data.autoAttendants||[]),{id:makeId(),name:'',scheduleNotes:'',timeoutType:'voicemail',timeoutDest:'',menuKeys:[]}] }) }
-  function updateAA(id,f,v) { onChange({ ...data, autoAttendants:data.autoAttendants.map(a=>a.id===id?{...a,[f]:v}:a) }) }
-  function removeAA(id)   { onChange({ ...data, autoAttendants:data.autoAttendants.filter(a=>a.id!==id) }) }
-
-  function addCF()        { onChange({ ...data, callFlows:[...(data.callFlows||[]),{id:makeId(),phoneNumber:'',normalDest:'',normalTF:'',closedDest:'',closedTF:'',notes:''}] }) }
-  function updateCF(id,f,v) { onChange({ ...data, callFlows:data.callFlows.map(c=>c.id===id?{...c,[f]:v}:c) }) }
-  function removeCF(id)   { onChange({ ...data, callFlows:data.callFlows.filter(c=>c.id!==id) }) }
-
-  function addHG()        { onChange({ ...data, huntGroups:[...(data.huntGroups||[]),{id:makeId(),name:'',type:'Ring All',members:'',pilotExt:'',pilotNum:'',notes:''}] }) }
-  function updateHG(id,f,v) { onChange({ ...data, huntGroups:data.huntGroups.map(h=>h.id===id?{...h,[f]:v}:h) }) }
-  function removeHG(id)   { onChange({ ...data, huntGroups:data.huntGroups.filter(h=>h.id!==id) }) }
-
-  function addBL()        { onChange({ ...data, buttonLayouts:[...(data.buttonLayouts||[]),{id:makeId(),extension:'',name:'',pages:[{id:makeId(),label:'Page 1',keys:[]}],sidecarNotes:'',notes:''}] }) }
-  function updateBL(id,f,v) { onChange({ ...data, buttonLayouts:data.buttonLayouts.map(b=>b.id===id?{...b,[f]:v}:b) }) }
-  function removeBL(id)   { onChange({ ...data, buttonLayouts:data.buttonLayouts.filter(b=>b.id!==id) }) }
-
-  function autoPopulateLayouts() {
-    const users = data.users || []
-    const existing = new Set((data.buttonLayouts||[]).map(b => b.extension).filter(Boolean))
-    const toAdd = users.filter(u => u.ext && !existing.has(u.ext))
-    if (!toAdd.length) return
-    const newLayouts = toAdd.map(u => {
-      const name = [u.firstName, u.lastName].filter(Boolean).join(' ')
-      return {
-        id: makeId(),
-        extension: u.ext,
-        name,
-        pages: [{
-          id: makeId(),
-          label: 'Page 1',
-          keys: [{ id: makeId(), type: 'line', value: u.ext, label: name }],
-        }],
-        sidecarNotes: '',
-        notes: '',
-      }
+  function toggle(key) {
+    onChange({
+      ...data,
+      systemConfig: {
+        ...checks,
+        [key]: !checks[key],
+      },
     })
-    onChange({ ...data, buttonLayouts: [...(data.buttonLayouts||[]), ...newLayouts] })
   }
-
-  const HG_TYPES = ['Ring All','Linear','Circular','Round Robin','Longest Idle']
 
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">Document the routing elements you'll build manually in NS. This becomes your config checklist in the Build step.</p>
+      <p className="mig-step-desc">
+        Build Meta and NetSapiens side by side. Use this checklist so you are not retyping the same
+        routing into this app — configure both platforms directly, then mark each item complete.
+      </p>
 
-      {/* Sub-tabs */}
-      <div className="mig-sys-tabs">
-        {TABS.map(t => (
-          <button key={t.id} type="button"
-            className={`mig-sys-tab${tab===t.id?' is-active':''}`}
-            onClick={()=>setTab(t.id)}>
-            {t.label}
-            {t.count > 0 && <span className="mig-count-badge" style={{marginLeft:6}}>{t.count}</span>}
-          </button>
-        ))}
-      </div>
-
-      {/* Auto Attendants */}
-      {tab === 'aa' && (
-        <div className="mig-sys-panel">
-          <p className="mig-hint">Add each AA, fill in schedule notes, set the no-input timeout action, then build the key menu.</p>
-          {(data.autoAttendants||[]).map(aa => (
-            <div key={aa.id} className="mig-card">
-              <div className="mig-card-head">
-                <input className="mig-card-title-input" value={aa.name} onChange={e=>updateAA(aa.id,'name',e.target.value)} placeholder="AA Name (e.g. Main Menu)"/>
-                <button type="button" className="mig-del-btn" onClick={()=>removeAA(aa.id)}>✕</button>
-              </div>
-              <Field label="Schedule / hours notes">
-                <MInput value={aa.scheduleNotes} onChange={v=>updateAA(aa.id,'scheduleNotes',v)} placeholder="M–F 8am–5pm, after-hours → VM"/>
-              </Field>
-              <Field label="No-input timeout" hint="What happens if the caller doesn't press anything">
-                <div className="mig-inline-dest">
-                  <select className="mig-key-type-sel" value={aa.timeoutType||'voicemail'} onChange={e=>updateAA(aa.id,'timeoutType',e.target.value)}>
-                    {DEST_TYPES.map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
-                  {DEST_NEEDS_VALUE.has(aa.timeoutType||'voicemail') && (
-                    <input className="mig-key-val-input" value={aa.timeoutDest||''} placeholder="Ext / name / number"
-                      onChange={e=>updateAA(aa.id,'timeoutDest',e.target.value)}/>
-                  )}
-                </div>
-              </Field>
-              <Field label="Key menu">
-                <MenuKeyBuilder
-                  menuKeys={aa.menuKeys||[]}
-                  onChange={keys=>updateAA(aa.id,'menuKeys',keys)}/>
-              </Field>
-            </div>
-          ))}
-          <button type="button" className="btn btn-secondary" onClick={addAA}>+ Add auto attendant</button>
-        </div>
-      )}
-
-      {/* Call Flows */}
-      {tab === 'cf' && (
-        <div className="mig-sys-panel">
-          <p className="mig-hint">One row per phone number. These become Inbound Call Management (ICM) rules in NS.</p>
-          {(data.callFlows||[]).length > 0 && (
-            <div className="mig-table-wrap">
-              <table className="mns-table">
-                <thead><tr>
-                  <th>Phone Number</th><th>Normal Dest.</th><th>Normal TF</th>
-                  <th>Closed Dest.</th><th>Closed TF</th><th>Notes</th><th></th>
-                </tr></thead>
-                <tbody>
-                  {data.callFlows.map(cf => (
-                    <tr key={cf.id}>
-                      <td><input className="mig-cell-input mig-cell-mono" value={cf.phoneNumber} onChange={e=>updateCF(cf.id,'phoneNumber',e.target.value)} placeholder="2255551000"/></td>
-                      <td><input className="mig-cell-input" value={cf.normalDest} onChange={e=>updateCF(cf.id,'normalDest',e.target.value)} placeholder="AA: Main Menu"/></td>
-                      <td><input className="mig-cell-input" value={cf.normalTF} onChange={e=>updateCF(cf.id,'normalTF',e.target.value)} placeholder="Business Hours"/></td>
-                      <td><input className="mig-cell-input" value={cf.closedDest} onChange={e=>updateCF(cf.id,'closedDest',e.target.value)} placeholder="Voicemail group"/></td>
-                      <td><input className="mig-cell-input" value={cf.closedTF} onChange={e=>updateCF(cf.id,'closedTF',e.target.value)} placeholder="After Hours"/></td>
-                      <td><input className="mig-cell-input" value={cf.notes} onChange={e=>updateCF(cf.id,'notes',e.target.value)}/></td>
-                      <td><button type="button" className="mig-del-btn" onClick={()=>removeCF(cf.id)}>✕</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+      <div className="mig-field-group">
+        <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
+          Side-by-side build
+          <span className="mig-count-badge">{doneCount}/{SYSTEM_CONFIG_CHECKS.length}</span>
+          {doneCount === SYSTEM_CONFIG_CHECKS.length && (
+            <span className="mig-ok-badge">Complete</span>
           )}
-          <button type="button" className="btn btn-secondary" style={{marginTop:data.callFlows?.length?8:0}} onClick={addCF}>+ Add call flow</button>
         </div>
-      )}
-
-      {/* Hunt Groups */}
-      {tab === 'hg' && (
-        <div className="mig-sys-panel">
-          {(data.huntGroups||[]).map(hg => (
-            <div key={hg.id} className="mig-card">
-              <div className="mig-card-head">
-                <input className="mig-card-title-input" value={hg.name} onChange={e=>updateHG(hg.id,'name',e.target.value)} placeholder="Group name (e.g. Sales)"/>
-                <button type="button" className="mig-del-btn" onClick={()=>removeHG(hg.id)}>✕</button>
+        <p className="mig-hint">
+          Open Meta and NetSapiens in separate windows. Review the live Meta config, rebuild it in NS,
+          then check it off here.
+        </p>
+        {SYSTEM_CONFIG_CHECKS.map(item => {
+          const done = !!checks[item.key]
+          return (
+            <div
+              key={item.key}
+              className={`mig-check-row${done?' is-done':''}`}
+              onClick={()=>toggle(item.key)}
+            >
+              <div className={`mig-check-box${done?' is-checked':''}`}>{done?'✓':''}</div>
+              <div className="mig-check-content">
+                <div className="mig-check-label">{item.label}</div>
               </div>
-              <div className="mig-field-row">
-                <Field label="Ring type">
-                  <MSelect value={hg.type} onChange={v=>updateHG(hg.id,'type',v)} options={HG_TYPES}/>
-                </Field>
-                <Field label="Pilot extension">
-                  <MInput value={hg.pilotExt} onChange={v=>updateHG(hg.id,'pilotExt',v)} placeholder="1100"/>
-                </Field>
-                <Field label="Pilot number (DID)">
-                  <MInput value={hg.pilotNum} onChange={v=>updateHG(hg.id,'pilotNum',v)} placeholder="2255551100"/>
-                </Field>
-              </div>
-              <Field label="Members (extensions, comma-separated)">
-                <MInput value={hg.members} onChange={v=>updateHG(hg.id,'members',v)} placeholder="1001, 1002, 1003"/>
-              </Field>
-              <Field label="Notes (overflow, distinctive ring)">
-                <MInput value={hg.notes} onChange={v=>updateHG(hg.id,'notes',v)} placeholder="Overflow to voicemail after 30s"/>
-              </Field>
             </div>
-          ))}
-          <button type="button" className="btn btn-secondary" onClick={addHG}>+ Add hunt group</button>
-        </div>
-      )}
-
-      {/* Button Layouts */}
-      {tab === 'bl' && (
-        <BLPanel layouts={data.buttonLayouts||[]} users={data.users||[]} onAdd={addBL} onUpdate={updateBL} onRemove={removeBL} onAutoPopulate={autoPopulateLayouts}/>
-      )}
-    </div>
-  )
-}
-
-function StepRPP({ data, onChange }) {
-  const rpp = data.rpp || {}
-  const numberComparison = compareMigrationNumberLists(rpp.expectedNumbers,rpp.resultingNumbers)
-  const expectedCount = numberComparison.expected.length
-  const resultingCount = numberComparison.resulting.length
-  function set(field,value) { onChange({ ...data, rpp:{ ...rpp, [field]:value } }) }
-  function setChecks(checks) { onChange({ ...data, rpp:{ ...rpp, checks } }) }
-  return (
-    <div className="mig-sys-panel">
-      <p className="mig-hint">Complete this work manually in RPP. ClearLine records confirmation only and does not connect to or change RPP.</p>
-      <div className="mig-field-group">
-        <div className="mig-field-group-title">RPP account</div>
-        <div className="mig-field-row">
-          <Field label="RPP customer / account ID"><MInput value={rpp.accountId||''} onChange={v=>set('accountId',v)} placeholder="Customer or account identifier"/></Field>
-          <Field label="Target platform"><MInput value={rpp.targetPlatform||'NetSapiens'} onChange={v=>set('targetPlatform',v)} placeholder="NetSapiens"/></Field>
-          <Field label="Technician"><MInput value={rpp.technician||''} onChange={v=>set('technician',v)} placeholder="Completed by"/></Field>
-          <Field label="Completed at"><MInput type="datetime-local" value={rpp.completedAt||''} onChange={v=>set('completedAt',v)}/></Field>
-        </div>
+          )
+        })}
       </div>
-      <div className="mig-field-group">
-        <div className="mig-field-group-title">Account and number push</div>
-        <div className="mig-field-row">
-          <Field label={`Expected numbers${expectedCount?` (${expectedCount})`:''}`}>
-            <MTextarea value={rpp.expectedNumbers||''} onChange={v=>set('expectedNumbers',v)} placeholder="One number per line or comma-separated"/>
-          </Field>
-          <Field label={`Numbers on target platform${resultingCount?` (${resultingCount})`:''}`}>
-            <MTextarea value={rpp.resultingNumbers||''} onChange={v=>set('resultingNumbers',v)} placeholder="Paste the resulting target-platform number list"/>
-          </Field>
-        </div>
-        {expectedCount > 0 && resultingCount > 0 && !numberComparison.matches && (
-          <div className="mns-error">
-            <div>RPP number verification does not match.</div>
-            {numberComparison.missing.length > 0 && <div>Missing: {numberComparison.missing.join(', ')}</div>}
-            {numberComparison.unexpected.length > 0 && <div>Unexpected: {numberComparison.unexpected.join(', ')}</div>}
-          </div>
-        )}
-        {numberComparison.matches && (
-          <div className="parse-note parse-ok">All {expectedCount} expected numbers are present on the target platform.</div>
-        )}
-        <ChecklistPanel items={RPP_CHECKS} values={rpp.checks||{}} onChange={setChecks}/>
-      </div>
-      <div className="mig-field-row">
-        <Field label="Exceptions"><MTextarea value={rpp.exceptions||''} onChange={v=>set('exceptions',v)} placeholder="Numbers held back, rejected, or requiring support"/></Field>
-        <Field label="RPP notes"><MTextarea value={rpp.notes||''} onChange={v=>set('notes',v)} placeholder="Ticket numbers and verification details"/></Field>
-      </div>
-    </div>
-  )
-}
-
-function StepDataCollection({ data, onChange }) {
-  const [section,setSection] = useState('account')
-  const planningDone = checklistComplete(PLANNING_CHECKS, data.planning?.checks)
-  const sections = [
-    { id:'account', label:'Account Setup' },
-    { id:'users', label:'Users', count:(data.users||[]).length },
-    { id:'devices', label:'Devices', count:(data.devices||[]).length },
-    { id:'system', label:'System Config' },
-    { id:'rpp', label:'RPP Account & Numbers' },
-  ]
-  return (
-    <div className="mig-data-collection">
-      <PhaseWarning>{!planningDone ? 'Planning is incomplete. Data collection may continue, but resolve planning actions before Programming.' : ''}</PhaseWarning>
-      <div className="mig-sys-tabs mig-collection-tabs">
-        {sections.map(item=>(
-          <button key={item.id} type="button" className={`mig-sys-tab${section===item.id?' is-active':''}`} onClick={()=>setSection(item.id)}>
-            {item.label}
-            {item.count > 0 && <span className="mig-count-badge" style={{marginLeft:6}}>{item.count}</span>}
-          </button>
-        ))}
-      </div>
-      {section==='account' && <StepAccount data={data} onChange={onChange}/>}
-      {section==='users' && <StepUsers data={data} onChange={onChange}/>}
-      {section==='devices' && <StepDevices data={data} onChange={onChange}/>}
-      {section==='system' && <StepSystem data={data} onChange={onChange}/>}
-      {section==='rpp' && <div className="mig-step-body"><StepRPP data={data} onChange={onChange}/></div>}
     </div>
   )
 }
 
 /* ════════════════════════════════════════════════════════════
-   LIFECYCLE — Programming
+   STEP 5 — Build
    ════════════════════════════════════════════════════════════ */
-function StepProgramming({ data, onChange, jobId }) {
-  const [syncState, setSyncState] = useState(null) // null | 'syncing' | 'done' | 'no-account' | 'error'
-
+function StepBuild({ data, onChange }) {
   function toggleDone(key) {
     onChange({ ...data, build:{ ...(data.build||{}), [key]:!(data.build||{})[key] } })
-  }
-
-  async function handleSyncToCallFlow() {
-    setSyncState('syncing')
-    try {
-      const job = jobId ? getJob(jobId) : null
-      const accountId = job?.account_id
-      if (!accountId) { setSyncState('no-account'); return }
-      const account = getAccount(accountId)
-      if (!account) { setSyncState('no-account'); return }
-      const routes = migrationToRoutes(data)
-      saveAccount({ ...account, routes })
-      setSyncState('done')
-      setTimeout(() => setSyncState(null), 3000)
-    } catch (err) {
-      console.error('Sync to call flow failed', err)
-      setSyncState('error')
-    }
   }
 
   const { userRows, phoneRows, e911Rows, reviewRows } = useMemo(() => {
@@ -1509,21 +1426,16 @@ function StepProgramming({ data, onChange, jobId }) {
   }, [data])
 
   const b = data.build || {}
+  const systemConfig = data.systemConfig || {}
   const domain = data.domain || 'DOMAIN'
-
-  const manualItems = (data.autoAttendants||[]).length + (data.callFlows||[]).length +
-    (data.huntGroups||[]).length + (data.buttonLayouts||[]).length
-  const programmingKeys = [
-    'usersImported','phonesImported','e911Imported',
-    ...(data.autoAttendants||[]).map(item=>`aa_${item.id}`),
-    ...(data.callFlows||[]).map(item=>`cf_${item.id}`),
-    ...(data.huntGroups||[]).map(item=>`hg_${item.id}`),
-    ...(data.buttonLayouts||[]).map(item=>`bl_${item.id}`),
-  ]
-  const totalItems = 3 + manualItems
-  const doneCount = programmingKeys.filter(key=>b[key]).length
-  const pct = Math.round((doneCount / Math.max(totalItems,1)) * 100)
-  const rppReady = checklistComplete(RPP_CHECKS, data.rpp?.checks)
+  const systemDone = SYSTEM_CONFIG_CHECKS.filter(item => !!systemConfig[item.key]).length
+  const importKeys = ['usersImported', 'phonesImported', 'e911Imported']
+  const testKeys = ['test_main', 'test_aa', 'test_hg', 'test_vm', 'test_night', 'test_e911']
+  const importDone = importKeys.filter(key => !!b[key]).length
+  const testDone = testKeys.filter(key => !!b[key]).length
+  const totalItems = SYSTEM_CONFIG_CHECKS.length + importKeys.length + testKeys.length
+  const doneCount = systemDone + importDone + testDone
+  const pct = Math.round((doneCount / Math.max(totalItems, 1)) * 100)
 
   function CheckRow({ bkey, label, detail }) {
     const done = !!b[bkey]
@@ -1547,40 +1459,12 @@ function StepProgramming({ data, onChange, jobId }) {
 
   return (
     <div className="mig-step-body">
-      <PhaseWarning>{!rppReady ? 'RPP account/number work is incomplete. Confirm the destination account and numbers before loading imports.' : ''}</PhaseWarning>
       {/* Progress */}
       <div className="mig-build-progress">
         <div className="mig-progress-bar-wrap">
           <div className="mig-progress-bar" style={{width:`${pct}%`}}/>
         </div>
         <div className="mig-progress-label">{doneCount} of {totalItems} steps complete — {pct}%</div>
-      </div>
-
-      {/* Sync to Call Flow */}
-      <div className="mig-field-group">
-        <div className="mig-field-group-title">Call Flow Diagram</div>
-        <p className="mig-hint">
-          Push call flows, auto attendants, and hunt groups from this migration into the account&rsquo;s
-          call flow diagram. Existing diagram data will be replaced.
-        </p>
-        <div style={{display:'flex',alignItems:'center',gap:12}}>
-          <button
-            type="button"
-            className={`btn${syncState==='done'?' btn-primary':' btn-secondary'}`}
-            disabled={syncState==='syncing'}
-            onClick={handleSyncToCallFlow}
-          >
-            {syncState==='syncing' ? 'Syncing…'
-              : syncState==='done' ? '✓ Call flow updated'
-              : 'Sync to call flow diagram'}
-          </button>
-          {syncState==='no-account' && (
-            <span className="mns-ext-warn">No account linked to this job — open the job from an account to enable sync.</span>
-          )}
-          {syncState==='error' && (
-            <span className="mns-ext-warn">Sync failed — check console for details.</span>
-          )}
-        </div>
       </div>
 
       {/* Downloads */}
@@ -1606,141 +1490,32 @@ function StepProgramming({ data, onChange, jobId }) {
         </div>
       </div>
 
-      {/* Manual build checklist */}
-      {manualItems > 0 && (
-        <div className="mig-field-group">
-          <div className="mig-field-group-title">Manual Config in NS</div>
-          {(data.autoAttendants||[]).map(aa=>(
-            <CheckRow key={aa.id} bkey={`aa_${aa.id}`}
-              label={`Auto Attendant: ${aa.name||'Unnamed'}`}
-              detail={[
-                aa.scheduleNotes&&`Schedule: ${aa.scheduleNotes}`,
-                (aa.menuKeys||[]).length&&`${aa.menuKeys.length} key${aa.menuKeys.length>1?'s':''}: ${aa.menuKeys.map(k=>`${k.digit}→${k.destValue||k.destType}`).join(', ')}`,
-              ].filter(Boolean).join(' · ')}/>
-          ))}
-          {(data.callFlows||[]).map(cf=>(
-            <CheckRow key={cf.id} bkey={`cf_${cf.id}`}
-              label={`ICM: ${cf.phoneNumber||'—'}`}
-              detail={[cf.normalDest&&`Normal → ${cf.normalDest}`, cf.closedDest&&`Closed → ${cf.closedDest}`].filter(Boolean).join(' · ')}/>
-          ))}
-          {(data.huntGroups||[]).map(hg=>(
-            <CheckRow key={hg.id} bkey={`hg_${hg.id}`}
-              label={`Hunt Group: ${hg.name||'Unnamed'} (${hg.type})`}
-              detail={hg.members?`Members: ${hg.members}`:''}/>
-          ))}
-          {(data.buttonLayouts||[]).map(bl=>{
-            const totalKeys = (bl.pages||[]).reduce((s,p)=>s+(p.keys||[]).length,0)
-            const pageCount = (bl.pages||[]).length
-            return (
-              <CheckRow key={bl.id} bkey={`bl_${bl.id}`}
-                label={`Phone layout: ext ${bl.extension||'—'}`}
-                detail={[
-                  totalKeys&&`${totalKeys} key${totalKeys>1?'s':''} across ${pageCount} page${pageCount>1?'s':''}`,
-                  bl.sidecarNotes&&`Sidecar: ${bl.sidecarNotes}`,
-                ].filter(Boolean).join(' · ')}/>
-            )
-          })}
+      <div className="mig-field-group">
+        <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
+          System Config
+          <span className="mig-count-badge">{systemDone}/{SYSTEM_CONFIG_CHECKS.length}</span>
         </div>
-      )}
-    </div>
-  )
-}
+        <p className="mig-hint">Tracked in the System Config step while you build Meta and NetSapiens side by side.</p>
+        {SYSTEM_CONFIG_CHECKS.map(item => (
+          <div key={item.key} className={`mig-check-row${systemConfig[item.key]?' is-done':''}`}>
+            <div className={`mig-check-box${systemConfig[item.key]?' is-checked':''}`}>{systemConfig[item.key]?'✓':''}</div>
+            <div className="mig-check-content">
+              <div className="mig-check-label">{item.label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
 
-function StepInstall({ data, onChange }) {
-  const install = data.install || {}
-  const phases = migrationPhaseCompletion(data)
-  function set(field,value) { onChange({ ...data, install:{ ...install, [field]:value } }) }
-  function setChecks(checks) { onChange({ ...data, install:{ ...install, checks } }) }
-  return (
-    <div className="mig-step-body">
-      <PhaseWarning>{!phases.programming ? 'Programming is not complete. Install can be prepared, but do not cut over until imports and manual programming are verified.' : ''}</PhaseWarning>
-      <p className="mig-step-desc">Stage equipment, complete network and firmware work, deploy phones, and preserve rollback during cutover.</p>
+      {/* Post-migration tests */}
       <div className="mig-field-group">
-        <div className="mig-field-group-title">Install checklist</div>
-        <ChecklistPanel items={INSTALL_CHECKS} values={install.checks||{}} onChange={setChecks}/>
+        <div className="mig-field-group-title">Post-Migration Tests</div>
+        <CheckRow bkey="test_main"  label="Main number rings correctly"/>
+        <CheckRow bkey="test_aa"    label="Auto attendant keys route correctly"/>
+        <CheckRow bkey="test_hg"    label="Hunt groups ring all members"/>
+        <CheckRow bkey="test_vm"    label="Voicemail accessible (*97 or *98)"/>
+        <CheckRow bkey="test_night" label="Night mode / after-hours toggles correctly"/>
+        <CheckRow bkey="test_e911"  label="E911 address confirmed with customer"/>
       </div>
-      <Field label="Install notes"><MTextarea value={install.notes||''} onChange={v=>set('notes',v)} placeholder="Arrival times, replacements, cabling, registration exceptions, rollback events…"/></Field>
-    </div>
-  )
-}
-
-function StepQC({ data, onChange }) {
-  const phases = migrationPhaseCompletion(data)
-  function setChecks(checks) { onChange({ ...data, build:{ ...(data.build||{}), ...checks } }) }
-  const qcValues = Object.fromEntries(QC_CHECKS.map(item=>[item.key,Boolean(data.build?.[item.key])]))
-  return (
-    <div className="mig-step-body">
-      <PhaseWarning>{!phases.install ? 'Install is incomplete. QC results may be recorded, but complete installation before customer acceptance.' : ''}</PhaseWarning>
-      <p className="mig-step-desc">Prove call routing, features, emergency information, and device registration before customer acceptance.</p>
-      <div className="mig-field-group">
-        <div className="mig-field-group-title">Quality control</div>
-        <ChecklistPanel items={QC_CHECKS} values={qcValues} onChange={setChecks}/>
-      </div>
-    </div>
-  )
-}
-
-function StepFollowup({ data, onChange }) {
-  const followup = data.followup || {}
-  const phases = migrationPhaseCompletion(data)
-  function set(field,value) { onChange({ ...data, followup:{ ...followup, [field]:value } }) }
-  function setChecks(checks) { onChange({ ...data, followup:{ ...followup, checks } }) }
-  return (
-    <div className="mig-step-body">
-      <PhaseWarning>{!phases.qc ? 'QC is incomplete. Follow-up can be documented, but Meta decommission will remain blocked.' : ''}</PhaseWarning>
-      <p className="mig-step-desc">Close issues, train the customer, deliver updated instructions, and record production acceptance.</p>
-      <div className="mig-field-group">
-        <div className="mig-field-group-title">Follow-up</div>
-        <div className="mig-field-row">
-          <Field label="Follow-up date"><MInput type="date" value={followup.followupDate||''} onChange={v=>set('followupDate',v)}/></Field>
-          <Field label="Customer approval by"><MInput value={followup.approvedBy||''} onChange={v=>set('approvedBy',v)} placeholder="Name / title"/></Field>
-        </div>
-        <ChecklistPanel items={FOLLOWUP_CHECKS} values={followup.checks||{}} onChange={setChecks}/>
-        <label className="mns-checkline mig-customer-approval">
-          <input type="checkbox" checked={!!followup.customerApproved} onChange={event=>set('customerApproved',event.target.checked)}/>
-          Customer approved final decommission of the old Meta system
-        </label>
-      </div>
-      <div className="mig-field-row">
-        <Field label="Open issues"><MTextarea value={followup.openIssues||''} onChange={v=>set('openIssues',v)} placeholder="Owner, due date, workaround, ticket"/></Field>
-        <Field label="Follow-up notes"><MTextarea value={followup.notes||''} onChange={v=>set('notes',v)} placeholder="Training, documentation, and customer feedback"/></Field>
-      </div>
-    </div>
-  )
-}
-
-function StepDecommission({ data, onChange }) {
-  const decommission = data.decommission || {}
-  const phases = migrationPhaseCompletion(data)
-  const eligible = canCompleteMetaDecommission(data)
-  const disabledKeys = new Set(eligible ? [] : ['oldSystemRemoved'])
-
-  function set(field,value) { onChange({ ...data, decommission:{ ...decommission, [field]:value } }) }
-  function setChecks(checks) {
-    let next = checks
-    const candidate = { ...data, decommission:{ ...decommission, checks:next } }
-    if (!canCompleteMetaDecommission(candidate) && next.oldSystemRemoved) {
-      next = { ...next, oldSystemRemoved:false }
-    }
-    onChange({ ...data, decommission:{ ...decommission, checks:next } })
-  }
-
-  return (
-    <div className="mig-step-body">
-      <PhaseWarning>{!phases.followup ? 'Follow-up and customer approval are incomplete. The final Meta removal confirmation is locked.' : ''}</PhaseWarning>
-      <p className="mig-step-desc">Safely retire the old Meta system after production stability, rollback expiration, and customer approval. ClearLine records the work but does not delete anything from Meta.</p>
-      <div className="mig-field-group mig-decommission-group">
-        <div className="mig-field-group-title">Meta decommission safety gate</div>
-        <ChecklistPanel items={DECOMMISSION_CHECKS} values={decommission.checks||{}} onChange={setChecks} disabledKeys={disabledKeys}/>
-        {!eligible && (
-          <p className="mig-hint">Complete the first six safety checks and record customer approval in Follow-up to unlock “Old system removed from Meta.”</p>
-        )}
-      </div>
-      <div className="mig-field-row">
-        <Field label="Completed by"><MInput value={decommission.completedBy||''} onChange={v=>set('completedBy',v)} placeholder="Technician"/></Field>
-        <Field label="Completed at"><MInput type="datetime-local" value={decommission.completedAt||''} onChange={v=>set('completedAt',v)}/></Field>
-      </div>
-      <Field label="Decommission notes"><MTextarea value={decommission.notes||''} onChange={v=>set('notes',v)} placeholder="Meta ticket, archived files, removed users/devices, license changes, exceptions"/></Field>
     </div>
   )
 }
@@ -1748,29 +1523,59 @@ function StepDecommission({ data, onChange }) {
 /* ════════════════════════════════════════════════════════════
    STEP INDICATOR
    ════════════════════════════════════════════════════════════ */
+const PHASES = [
+  { id:'pre',     label:'Pre-Migration', steps:[0,1,2,3]    },
+  { id:'config',  label:'Configuration', steps:[4,5,6,7,8]  },
+  { id:'cutover', label:'Cutover',       steps:[9,10,11]    },
+  { id:'post',    label:'Post-Cutover',  steps:[12,13]      },
+]
 const STEPS = [
-  { id:0, key:'research', label:'Research' },
-  { id:1, key:'planning', label:'Planning' },
-  { id:2, key:'collection', label:'Data Collection' },
-  { id:3, key:'programming', label:'Programming' },
-  { id:4, key:'install', label:'Install' },
-  { id:5, key:'qc', label:'QC' },
-  { id:6, key:'followup', label:'Follow-up' },
-  { id:7, key:'decommission', label:'Meta Decommission' },
+  { id:0,  label:'Kickoff'          },
+  { id:1,  label:'Hardware Audit'   },
+  { id:2,  label:'Feature Inventory'},
+  { id:3,  label:'Site Planning'    },
+  { id:4,  label:'Account Setup'    },
+  { id:5,  label:'Users'            },
+  { id:6,  label:'Devices'          },
+  { id:7,  label:'System Config'    },
+  { id:8,  label:'Build'            },
+  { id:9,  label:'Go / No-Go'       },
+  { id:10, label:'Runbook'          },
+  { id:11, label:'Phone Tracker'    },
+  { id:12, label:'Test Calls'       },
+  { id:13, label:'Sign-off'         },
 ]
 
-function StepIndicator({ current, onGoto, completion }) {
+function StepIndicator({ current, onGoto }) {
   return (
-    <div className="mig-wizard-steps no-print">
-      {STEPS.map((s, i) => (
-        <button key={s.id} type="button"
-          className={`mig-wizard-step${current===s.id?' is-active':''}${completion[s.key]?' is-done':''}`}
-          onClick={()=>onGoto(s.id)}>
-          <span className="mig-wizard-num">{completion[s.key]?'✓':s.id+1}</span>
-          <span className="mig-wizard-label">{s.label}</span>
-          {i < STEPS.length-1 && <span className="mig-wizard-connector"/>}
-        </button>
-      ))}
+    <div className="mig-wizard-phases no-print">
+      {PHASES.map(phase => {
+        const isActive = phase.steps.includes(current)
+        const isDone   = phase.steps.every(s => s < current)
+        return (
+          <div key={phase.id} className={`mig-phase-block${isActive?' is-active':isDone?' is-done':''}`}>
+            <div className="mig-phase-label">{isDone ? '✓ ' : ''}{phase.label}</div>
+            <div className="mig-phase-steps">
+              {phase.steps.map(sid => {
+                const s = STEPS.find(x => x.id === sid)
+                const stepDone   = sid < current
+                const stepActive = sid === current
+                return (
+                  <button key={sid} type="button"
+                    className={`mig-phase-step${stepActive?' is-active':stepDone?' is-done':''}`}
+                    onClick={() => onGoto(sid)}
+                    title={s.label}>
+                    {stepDone ? '✓' : (sid + 1)}
+                  </button>
+                )
+              })}
+            </div>
+            {isActive && (
+              <div className="mig-phase-current-label">{STEPS.find(s => s.id === current)?.label}</div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -1778,14 +1583,30 @@ function StepIndicator({ current, onGoto, completion }) {
 /* ════════════════════════════════════════════════════════════
    ROOT
    ════════════════════════════════════════════════════════════ */
+function normalizeLoadedMigration(loaded) {
+  const base = emptyMigration()
+  if (!loaded) return base
+  return {
+    ...base,
+    ...loaded,
+    // Keep legacy AA/CF/HG/layout arrays if present; never require them for the new UI.
+    autoAttendants: loaded.autoAttendants || [],
+    callFlows: loaded.callFlows || [],
+    huntGroups: loaded.huntGroups || [],
+    buttonLayouts: loaded.buttonLayouts || [],
+    sharedDeviceApprovals: loaded.sharedDeviceApprovals || [],
+    systemConfig: loaded.systemConfig || {},
+    build: loaded.build || {},
+  }
+}
+
 export default function MigrationWorkspace({ jobId }) {
-  const [data, setData]   = useState(() => loadJobMigration(jobId) || emptyMigration())
+  const [data, setData]   = useState(() => normalizeLoadedMigration(loadJobMigration(jobId)))
   const [step, setStep]   = useState(0)
   const saveTimer = useRef(null)
 
   useEffect(() => {
-    const loaded = loadJobMigration(jobId)
-    if (loaded) setData(loaded)
+    setData(normalizeLoadedMigration(loadJobMigration(jobId)))
   }, [jobId])
 
   function handleChange(next) {
@@ -1796,16 +1617,21 @@ export default function MigrationWorkspace({ jobId }) {
 
   useEffect(() => () => clearTimeout(saveTimer.current), [])
 
-  const completion = useMemo(() => migrationPhaseCompletion(data), [data])
   const STEP_COMPONENTS = [
-    <StepResearch key="research" data={data} onChange={handleChange}/>,
-    <StepPlanning key="planning" data={data} onChange={handleChange}/>,
-    <StepDataCollection key="collection" data={data} onChange={handleChange}/>,
-    <StepProgramming key="programming" data={data} onChange={handleChange} jobId={jobId}/>,
-    <StepInstall key="install" data={data} onChange={handleChange}/>,
-    <StepQC key="qc" data={data} onChange={handleChange}/>,
-    <StepFollowup key="followup" data={data} onChange={handleChange}/>,
-    <StepDecommission key="decommission" data={data} onChange={handleChange}/>,
+    <StepKickoff         key="kickoff"  data={data} onChange={handleChange}/>,
+    <StepHardwareAudit   key="hw"       data={data} onChange={handleChange}/>,
+    <StepFeatureInventory key="feat"    data={data} onChange={handleChange}/>,
+    <StepSites           key="sites"    data={data} onChange={handleChange}/>,
+    <StepAccount         key="account"  data={data} onChange={handleChange}/>,
+    <StepUsers           key="users"    data={data} onChange={handleChange}/>,
+    <StepDevices         key="devices"  data={data} onChange={handleChange}/>,
+    <StepSystem          key="system"   data={data} onChange={handleChange}/>,
+    <StepBuild           key="build"    data={data} onChange={handleChange} jobId={jobId}/>,
+    <StepGoNoGo          key="gonogo"   data={data} onChange={handleChange}/>,
+    <StepRunbook         key="runbook"  data={data} onChange={handleChange}/>,
+    <StepPhoneTracker    key="phones"   data={data} onChange={handleChange}/>,
+    <StepTestCalls       key="tests"    data={data} onChange={handleChange}/>,
+    <StepSignoff         key="signoff"  data={data} onChange={handleChange}/>,
   ]
 
   return (
@@ -1813,11 +1639,11 @@ export default function MigrationWorkspace({ jobId }) {
       <div className="design-hero hero-grid" style={{marginBottom:16}}>
         <div>
           <div className="survey-kicker">Migration</div>
-          <h1>Meta → {data.rpp?.targetPlatform||'NetSapiens'}</h1>
+          <h1>MCU → NetSapiens</h1>
         </div>
       </div>
 
-      <StepIndicator current={step} onGoto={setStep} completion={completion}/>
+      <StepIndicator current={step} onGoto={setStep}/>
 
       <div className="mig-wizard-body">
         {STEP_COMPONENTS[step]}
@@ -1830,7 +1656,7 @@ export default function MigrationWorkspace({ jobId }) {
         </button>
         <span className="mig-wizard-page">{step+1} of {STEPS.length}</span>
         <button type="button" className="btn btn-primary" disabled={step===STEPS.length-1} onClick={()=>setStep(s=>s+1)}>
-          {step===STEPS.length-2 ? 'Go to Decommission →' : `Next: ${STEPS[step+1]?.label||''} →`}
+          {step===STEPS.length-2 ? 'Go to Sign-off →' : step===STEPS.length-1 ? 'Done' : 'Next →'}
         </button>
       </div>
     </div>
