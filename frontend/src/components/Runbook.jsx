@@ -1,6 +1,6 @@
 /**
  * Field runbook — one go-live install step at a time.
- * Route: #/job/:id/runbook
+ * Tab: #/job/:id/golive?tab=runbook (legacy #/job/:id/runbook redirects here).
  */
 
 import { useMemo, useState } from 'react'
@@ -107,7 +107,7 @@ export default function Runbook({ jobId, doneBy = '', profileDisplayName } = {})
 
   function exit() {
     if (jobId) navigate(`/job/${jobId}/golive`)
-    else navigate('/jobs')
+    else navigate('/accounts')
   }
 
   if (!jobId) {

@@ -2,11 +2,15 @@
  * E911Section — locations table + assign on user rows
  */
 
+import { useRef } from 'react'
 import { emptyE911Location, makeId } from '../lib/surveyModel.js'
+import { useCrumpleDelete } from './CrumpleDelete.jsx'
 
 export default function E911Section({ survey, onChange }) {
   const locations = survey.e911Locations || []
   const users = survey.users || []
+  const rows = useRef(new Map())
+  const { crumple, bin } = useCrumpleDelete()
 
   function setLocations(next) {
     onChange({ e911Locations: next })
@@ -35,6 +39,7 @@ export default function E911Section({ survey, onChange }) {
 
   return (
     <div className="e911-section">
+      {bin}
       <div className="design-list-head">
         <div>
           <h3>E911 locations</h3>
@@ -56,7 +61,15 @@ export default function E911Section({ survey, onChange }) {
 
       <div className="e911-locations">
         {locations.map(loc => (
-          <div key={loc.id} className="e911-location-row" data-focus={loc.id}>
+          <div
+            key={loc.id}
+            className="e911-location-row"
+            data-focus={loc.id}
+            ref={el => {
+              if (el) rows.current.set(loc.id, el)
+              else rows.current.delete(loc.id)
+            }}
+          >
             <label className="field">
               <span>Name</span>
               <input
@@ -81,7 +94,11 @@ export default function E911Section({ survey, onChange }) {
                 placeholder="Suite / floor"
               />
             </label>
-            <button type="button" className="btn btn-secondary" onClick={() => removeLocation(loc.id)}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => crumple(rows.current.get(loc.id), () => removeLocation(loc.id))}
+            >
               Remove
             </button>
           </div>

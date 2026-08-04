@@ -201,10 +201,14 @@ export async function downloadPdfReport(survey, readiness) {
       }
     }
 
-    pdf.save(filenameBase(survey, 'pdf'))
+    return pdf.output('blob')
   } finally {
     iframe.remove()
   }
+}
+
+export function surveyExportFilename(survey, ext = 'pdf') {
+  return filenameBase(survey, ext)
 }
 
 function waitForDocumentReady(doc) {

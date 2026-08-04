@@ -2,14 +2,18 @@
  * Call-flow map — compact preview, fullscreen follow mode, plain-language labels.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   EXPANDED_LAYOUT,
   PREVIEW_LAYOUT,
   buildFlowModel,
+  defaultFlowDestination,
+  livePathMembership,
   validateFlowGraph,
+  walkLivePath,
 } from '../lib/flowMapModel.js'
+import { prefersReducedMotion } from '../lib/motion.js'
 
 const PREVIEW = PREVIEW_LAYOUT
 const EXPANDED = EXPANDED_LAYOUT
@@ -97,7 +101,9 @@ function FlowExplorer({ design, mode = 'expanded', warnings = [], onClose, onGoT
   const layout = mode === 'expanded' ? EXPANDED : PREVIEW
   const model = useMemo(() => buildFlowModel(design, layout), [design, layout])
   const [selectedId, setSelectedId] = useState(null)
+  const [destId, setDestId] = useState(null)
   const [followIndex, setFollowIndex] = useState(-1)
+  const [mapOpen, setMapOpen] = useState(true)
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [dragging, setDragging] = useState(false)
@@ -105,6 +111,14 @@ function FlowExplorer({ design, mode = 'expanded', warnings = [], onClose, onGoT
   const viewportRef = useRef(null)
   const zoomRef = useRef(zoom)
   zoomRef.current = zoom
+
+  const railDest = destId || selectedId
+  const railPath = useMemo(
+    () => (railDest ? walkLivePath(model, railDest) : []),
+    [model, railDest],
+  )
+  const railPathRef = useRef(railPath)
+  railPathRef.current = railPath
 
   const selected = model.nodes.find(n => n.id === selectedId) || null
   const following = followIndex >= 0
@@ -120,7 +134,6 @@ function FlowExplorer({ design, mode = 'expanded', warnings = [], onClose, onGoT
     const pad = mode === 'expanded' ? 40 : 20
     const availW = Math.max(el.clientWidth - pad * 2, 120)
     const availH = Math.max(el.clientHeight - pad * 2, 120)
-    // Prefer fitting the whole tree; avoid over-zooming which clips side branches
     const scale = Math.min(1, availW / model.width, availH / model.height)
     const nextZoom = Math.max(0.35, Math.min(mode === 'expanded' ? 1.05 : 1, scale))
     setZoom(nextZoom)
@@ -132,6 +145,7 @@ function FlowExplorer({ design, mode = 'expanded', warnings = [], onClose, onGoT
 
   useEffect(() => {
     setSelectedId(null)
+    setDestId(null)
     setFollowIndex(-1)
     const t = requestAnimationFrame(() => fitView())
     return () => cancelAnimationFrame(t)
@@ -142,6 +156,14 @@ function FlowExplorer({ design, mode = 'expanded', warnings = [], onClose, onGoT
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [fitView])
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 860px)')
+    const sync = () => setMapOpen(!mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
 
   const panToNode = useCallback((id, z = zoomRef.current) => {
     const node = model.nodes.find(n => n.id === id)
@@ -157,26 +179,38 @@ function FlowExplorer({ design, mode = 'expanded', warnings = [], onClose, onGoT
 
   function selectNode(id, { follow = false } = {}) {
     setSelectedId(id)
-    if (!follow) setFollowIndex(-1)
+    if (!follow) {
+      setFollowIndex(-1)
+      setDestId(id)
+    }
     panToNode(id)
   }
 
   function startFollow() {
-    if (!model.outline.length) return
+    const dest = destId || selectedId || defaultFlowDestination(model)
+    if (!dest) return
+    const path = walkLivePath(model, dest)
+    if (!path.length) return
+    setDestId(path[path.length - 1].id)
     setFollowIndex(0)
-    const id = model.outline[0].id
-    setSelectedId(id)
-    panToNode(id)
+    setSelectedId(path[0].id)
+    panToNode(path[0].id)
   }
 
   function followDelta(delta) {
-    if (!model.outline.length) return
+    let path = railPathRef.current
+    if (!path.length) {
+      const dest = destId || selectedId || defaultFlowDestination(model)
+      if (!dest) return
+      path = walkLivePath(model, dest)
+      if (!path.length) return
+      setDestId(path[path.length - 1].id)
+    }
     const base = followIndex < 0 ? (delta > 0 ? -1 : 0) : followIndex
-    const next = Math.min(model.outline.length - 1, Math.max(0, base + delta))
+    const next = Math.min(path.length - 1, Math.max(0, base + delta))
     setFollowIndex(next)
-    const id = model.outline[next].id
-    setSelectedId(id)
-    panToNode(id)
+    setSelectedId(path[next].id)
+    panToNode(path[next].id)
   }
 
   useEffect(() => {
@@ -189,10 +223,11 @@ function FlowExplorer({ design, mode = 'expanded', warnings = [], onClose, onGoT
       if (e.key === 'ArrowRight' || e.key === 'j') {
         e.preventDefault()
         setFollowIndex((idx) => {
-          if (!model.outline.length) return idx
+          const path = railPathRef.current
+          if (!path.length) return idx
           const base = idx < 0 ? -1 : idx
-          const next = Math.min(model.outline.length - 1, Math.max(0, base + 1))
-          const id = model.outline[next].id
+          const next = Math.min(path.length - 1, Math.max(0, base + 1))
+          const id = path[next].id
           setSelectedId(id)
           requestAnimationFrame(() => panToNode(id))
           return next
@@ -201,10 +236,11 @@ function FlowExplorer({ design, mode = 'expanded', warnings = [], onClose, onGoT
       if (e.key === 'ArrowLeft' || e.key === 'k') {
         e.preventDefault()
         setFollowIndex((idx) => {
-          if (!model.outline.length) return idx
+          const path = railPathRef.current
+          if (!path.length) return idx
           const base = idx < 0 ? 0 : idx
-          const next = Math.min(model.outline.length - 1, Math.max(0, base - 1))
-          const id = model.outline[next].id
+          const next = Math.min(path.length - 1, Math.max(0, base - 1))
+          const id = path[next].id
           setSelectedId(id)
           requestAnimationFrame(() => panToNode(id))
           return next
@@ -213,7 +249,7 @@ function FlowExplorer({ design, mode = 'expanded', warnings = [], onClose, onGoT
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [mode, onClose, model.outline, panToNode])
+  }, [mode, onClose, panToNode])
 
   function zoomBy(delta) {
     setZoom(z => Math.min(2.4, Math.max(0.35, Math.round((z + delta) * 100) / 100)))
@@ -242,7 +278,15 @@ function FlowExplorer({ design, mode = 'expanded', warnings = [], onClose, onGoT
     zoomBy(e.deltaY > 0 ? -0.1 : 0.1)
   }
 
+  function onRailChip(i) {
+    const node = railPath[i]
+    if (!node) return
+    setFollowIndex(i)
+    selectNode(node.id, { follow: true })
+  }
+
   const viewportH = mode === 'expanded' ? 'min(70vh, 720px)' : 280
+  const canFollow = railPath.length > 0 || Boolean(defaultFlowDestination(model))
 
   return (
     <div className={`call-flow call-flow-explore call-flow-mode-${mode}`}>
@@ -252,25 +296,25 @@ function FlowExplorer({ design, mode = 'expanded', warnings = [], onClose, onGoT
           <h2 id="call-flow-overlay-title">Call flow map</h2>
           <p>
             {mode === 'expanded'
-              ? 'Follow the path with Next, or click any step. Drag to pan · ⌘/Ctrl+scroll to zoom · Esc to close.'
+              ? 'Walk the path rail with Next, or tap a hop. Drag to pan · ⌘/Ctrl+scroll to zoom · Esc to close.'
               : 'Explore routing hops.'}
           </p>
         </div>
         <div className="call-flow-meta-actions">
           {mode === 'expanded' && (
             <>
-              <button type="button" className="btn btn-primary" onClick={startFollow}>
+              <button type="button" className="btn btn-primary" onClick={startFollow} disabled={!canFollow}>
                 Start follow
               </button>
-              <button type="button" className="btn btn-secondary" onClick={() => followDelta(-1)} disabled={!model.outline.length}>
+              <button type="button" className="btn btn-secondary" onClick={() => followDelta(-1)} disabled={!railPath.length}>
                 Prev
               </button>
-              <button type="button" className="btn btn-secondary" onClick={() => followDelta(1)} disabled={!model.outline.length}>
+              <button type="button" className="btn btn-secondary" onClick={() => followDelta(1)} disabled={!railPath.length}>
                 Next
               </button>
-              {following && (
+              {following && railPath.length > 0 && (
                 <span className="call-flow-follow-pos">
-                  {followIndex + 1} / {model.outline.length}
+                  {followIndex + 1} / {railPath.length}
                 </span>
               )}
               {onClose && (
@@ -290,70 +334,76 @@ function FlowExplorer({ design, mode = 'expanded', warnings = [], onClose, onGoT
       </div>
 
       <div className="call-flow-explorer">
-        <aside className="call-flow-steps" aria-label="Call flow steps">
-          <div className="call-flow-steps-head">Steps</div>
-          <ol className="call-flow-step-list">
-            {model.outline.map((step, i) => (
-              <li key={step.id}>
-                <button
-                  type="button"
-                  className={`call-flow-step${selectedId === step.id ? ' is-active' : ''}${followIndex === i ? ' is-follow' : ''}`}
-                  onClick={() => {
-                    setFollowIndex(i)
-                    selectNode(step.id, { follow: true })
-                  }}
-                >
-                  <span className="call-flow-step-idx">{i + 1}</span>
-                  <span className="call-flow-step-body">
-                    <strong>{step.title}</strong>
-                    {step.detail && <span>{step.detail}</span>}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ol>
-        </aside>
-
         <div className="call-flow-map-wrap">
-          <div className="call-flow-toolbar" role="toolbar" aria-label="Map controls">
-            <button type="button" className="btn btn-secondary" onClick={() => zoomBy(0.15)}>+</button>
-            <button type="button" className="btn btn-secondary" onClick={() => zoomBy(-0.15)}>−</button>
-            <button type="button" className="btn btn-secondary" onClick={fitView}>Fit</button>
-            <span className="call-flow-zoom-label">{Math.round(zoom * 100)}%</span>
-          </div>
+          <nav className="cf-path-rail" aria-label="Call path">
+            {railPath.length === 0 ? (
+              <span className="cf-path-rail-empty">Select a destination to trace the path</span>
+            ) : (
+              railPath.map((node, i) => (
+                <Fragment key={node.id}>
+                  {i > 0 && <span className="cf-path-rail-sep" aria-hidden="true">→</span>}
+                  <button
+                    type="button"
+                    className={`cf-path-chip${selectedId === node.id ? ' is-active' : ''}${followIndex === i ? ' is-follow' : ''}`}
+                    onClick={() => onRailChip(i)}
+                  >
+                    <span className="cf-path-chip-kind">{railKind(node)}</span>
+                    <span className="cf-path-chip-name">{node.title}</span>
+                  </button>
+                </Fragment>
+              ))
+            )}
+          </nav>
 
-          <div
-            ref={viewportRef}
-            className={`call-flow-viewport${dragging ? ' is-dragging' : ''}`}
-            style={{ height: viewportH }}
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerLeave={onPointerUp}
-            onWheel={onWheel}
+          <button
+            type="button"
+            className="cf-map-toggle"
+            aria-expanded={mapOpen}
+            onClick={() => setMapOpen(open => !open)}
           >
-            <svg
-              width={model.width}
-              height={model.height}
-              viewBox={`0 0 ${model.width} ${model.height}`}
-              className="call-flow-svg"
-              style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
-              role="img"
-              aria-label="Call flow diagram"
+            {mapOpen ? 'Hide map' : 'Show map'}
+          </button>
+
+          <div className={`call-flow-canvas-panel${mapOpen ? ' is-open' : ''}`}>
+            <div className="call-flow-toolbar" role="toolbar" aria-label="Map controls">
+              <button type="button" className="btn btn-secondary" onClick={() => zoomBy(0.15)}>+</button>
+              <button type="button" className="btn btn-secondary" onClick={() => zoomBy(-0.15)}>−</button>
+              <button type="button" className="btn btn-secondary" onClick={fitView}>Fit</button>
+              <span className="call-flow-zoom-label">{Math.round(zoom * 100)}%</span>
+            </div>
+
+            <div
+              ref={viewportRef}
+              className={`call-flow-viewport${dragging ? ' is-dragging' : ''}`}
+              style={{ height: viewportH }}
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerLeave={onPointerUp}
+              onWheel={onWheel}
             >
-              <StaticMapSvg
-                model={model}
-                selectedId={selectedId}
-                followId={following ? model.outline[followIndex]?.id : null}
-                truncateMax={truncateMax}
-                warnings={warnings}
-                onSelect={(id) => {
-                  const idx = model.outline.findIndex(s => s.id === id)
-                  if (idx >= 0) setFollowIndex(idx)
-                  selectNode(id, { follow: idx >= 0 })
-                }}
-              />
-            </svg>
+              <svg
+                width={model.width}
+                height={model.height}
+                viewBox={`0 0 ${model.width} ${model.height}`}
+                className="call-flow-svg"
+                style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+                role="img"
+                aria-label="Call flow diagram"
+              >
+                <StaticMapSvg
+                  model={model}
+                  selectedId={selectedId}
+                  pathEndId={railDest}
+                  followId={following ? railPath[followIndex]?.id : null}
+                  truncateMax={truncateMax}
+                  warnings={warnings}
+                  onSelect={(id) => {
+                    selectNode(id)
+                  }}
+                />
+              </svg>
+            </div>
           </div>
 
           <div className="call-flow-detail" role="status">
@@ -385,8 +435,8 @@ function FlowExplorer({ design, mode = 'expanded', warnings = [], onClose, onGoT
             ) : (
               <>
                 <div className="call-flow-detail-kicker">Follow the flow</div>
-                <h3>Pick a step or press Start follow</h3>
-                <p className="muted">Next walks each hop so you can read the full destination. Click any node to see details and jump directly to its form field.</p>
+                <h3>Pick a hop or press Start follow</h3>
+                <p className="muted">The rail shows entry to destination. Next walks each hop.</p>
                 {warnings.length > 0 && (
                   <div className="cf-warnings-list">
                     {warnings.map((w, i) => (
@@ -407,59 +457,84 @@ function FlowExplorer({ design, mode = 'expanded', warnings = [], onClose, onGoT
 
 // StaticMapSvg — shared between preview and expanded modes.
 // Uses node.w / node.h (assigned by layoutGraph) — no layout object needed for sizing.
-function StaticMapSvg({ model, selectedId, followId = null, truncateMax = 28, onSelect, warnings = [] }) {
+function StaticMapSvg({
+  model,
+  selectedId,
+  pathEndId = null,
+  followId = null,
+  truncateMax = 28,
+  onSelect,
+  warnings = [],
+}) {
+  const uid = useId().replace(/:/g, '')
+  const reduce = prefersReducedMotion()
+  const pathSets = useMemo(
+    () => livePathMembership(model, pathEndId || selectedId),
+    [model, pathEndId, selectedId],
+  )
+  const dimming = Boolean(pathSets)
+
+  const orderIndex = useMemo(() => {
+    const map = new Map()
+    model.outline.forEach((step, i) => map.set(step.id, i))
+    model.nodes.forEach((node) => {
+      if (!map.has(node.id)) map.set(node.id, map.size)
+    })
+    return map
+  }, [model])
+
   const warnMap = {}
   warnings.forEach(w => {
     if (!warnMap[w.nodeId]) warnMap[w.nodeId] = w.severity
     else if (w.severity === 'warn') warnMap[w.nodeId] = 'warn'
   })
+
+  const dotsId = `cf-dots-${uid}`
+
   return (
-    <>
+    <g className={`cf-map${dimming ? ' is-dimming' : ''}${reduce ? ' is-reduced' : ''}`}>
       <defs>
-        <pattern id="cf-grid" width="24" height="24" patternUnits="userSpaceOnUse">
-          <path d="M 24 0 L 0 0 0 24" fill="none" stroke="currentColor" strokeWidth="0.5" opacity="0.08" />
+        <pattern id={dotsId} width="16" height="16" patternUnits="userSpaceOnUse">
+          <circle cx="1.5" cy="1.5" r="0.8" fill="currentColor" opacity="0.055" />
         </pattern>
-        <marker id="cf-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" opacity="0.45" />
-        </marker>
       </defs>
-      <rect width={model.width} height={model.height} fill="url(#cf-grid)" />
+      <rect width={model.width} height={model.height} fill={`url(#${dotsId})`} />
 
-      {/* Edges render behind nodes */}
-      {model.edges.map((edge, i) => (
-        <g key={`e-${i}`} className={`cf-edge${edge.tone === 'night' ? ' cf-edge-night' : ''}`}>
-          <path
-            d={edge.path}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            opacity="0.45"
-            markerEnd="url(#cf-arrow)"
-          />
-          {edge.label && (
-            <text x={edge.labelX} y={edge.labelY} className="cf-edge-label">{edge.label}</text>
-          )}
-        </g>
-      ))}
+      {model.edges.map((edge, i) => {
+        const onPath = !pathSets || pathSets.edges.has(i)
+        return (
+          <g
+            key={`e-${i}`}
+            className={`cf-edge${edge.tone === 'night' ? ' cf-edge-night' : ''}${onPath ? ' is-on-path' : ''}`}
+            style={{ '--i': i }}
+          >
+            <path className="track" d={edge.path} pathLength="1" />
+            <path className="pulse" d={edge.path} pathLength="1" />
+            {edge.label && (
+              <text x={edge.labelX} y={edge.labelY} className="cf-edge-label">{edge.label}</text>
+            )}
+          </g>
+        )
+      })}
 
-      {/* Nodes */}
       {model.nodes.map((node) => {
         if (node.x == null || node.y == null) return null
         const active = selectedId === node.id
         const follow = followId === node.id
+        const onPath = !pathSets || pathSets.nodes.has(node.id)
         const w = node.w ?? 200
         const h = node.h ?? 52
         const isDiamond = node.kind === 'branch'
-
-        // Text vertical positions relative to node height
         const titleY = node.detail ? Math.round(h * 0.42) : Math.round(h * 0.62)
         const detailY = Math.round(h * 0.76)
+        const i = orderIndex.get(node.id) ?? 0
 
         return (
           <g
             key={node.id}
-            className={`cf-node cf-node-${node.kind}${node.tone ? ` cf-tone-${node.tone}` : ''}${active ? ' is-selected' : ''}${follow ? ' is-follow' : ''}${warnMap[node.id] ? ` cf-node-warn-${warnMap[node.id]}` : ''}`}
+            className={`cf-node cf-node-${node.kind}${node.tone ? ` cf-tone-${node.tone}` : ''}${active ? ' is-selected' : ''}${follow ? ' is-follow' : ''}${onPath ? ' is-on-path' : ''}${warnMap[node.id] ? ` cf-node-warn-${warnMap[node.id]}` : ''}`}
             transform={`translate(${node.x}, ${node.y})`}
+            style={{ '--i': i }}
           >
             <title>{[node.title, node.detail].filter(Boolean).join(' — ')}</title>
 
@@ -472,7 +547,6 @@ function StaticMapSvg({ model, selectedId, followId = null, truncateMax = 28, on
               <rect width={w} height={h} rx="10" className="cf-shape" />
             )}
 
-            {/* Invisible hit area slightly larger than the shape */}
             {onSelect && (
               <rect
                 x={-3} y={-3} width={w + 6} height={h + 6}
@@ -498,14 +572,18 @@ function StaticMapSvg({ model, selectedId, followId = null, truncateMax = 28, on
                 )}
               </>
             )}
-            {warnMap[node.id] && (
-              <text x={w - 8} y={10} textAnchor="middle" className="cf-warn-icon" aria-hidden="true">⚠</text>
-            )}
           </g>
         )
       })}
-    </>
+    </g>
   )
+}
+
+function railKind(node) {
+  if (node.tone === 'night') return 'NIGHT'
+  if (node.kind === 'main') return 'ENTRY'
+  if (node.kind === 'branch') return 'BRANCH'
+  return 'DEST'
 }
 
 function kindLabel(kind, tone) {

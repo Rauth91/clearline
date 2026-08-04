@@ -22,6 +22,10 @@ import {
   previewBulkExtensionApply,
   SYSTEM_CONFIG_CHECKS,
 } from '../lib/migrationExtensions.js'
+import Dropzone from './Dropzone.jsx'
+import { useCrumpleDelete } from './CrumpleDelete.jsx'
+import Why from './Why.jsx'
+import TipChips, { insertTipHeading } from './TipChips.jsx'
 
 /* ── CSV helpers ──────────────────────────────────────────── */
 function parseCSV(text) {
@@ -152,39 +156,13 @@ function MSelect({ value, onChange, options }) {
   )
 }
 
-/* ── Upload slot ──────────────────────────────────────────── */
-function UploadSlot({ label, hint, loaded, count, onFile }) {
-  const ref = useRef()
-  const [drag, setDrag] = useState(false)
-  function handle(file) {
-    if (!file) return
-    const r = new FileReader()
-    r.onload = () => { try { onFile(parseCSV(r.result), file.name) } catch { onFile(null, null) } }
-    r.readAsText(file)
-  }
-  return (
-    <div className={`mns-slot${loaded?' is-loaded':''}${drag?' is-dragging':''}`}
-      onClick={()=>ref.current?.click()}
-      onDragOver={e=>{e.preventDefault();setDrag(true)}}
-      onDragLeave={()=>setDrag(false)}
-      onDrop={e=>{e.preventDefault();setDrag(false);handle(e.dataTransfer.files[0])}}>
-      <span className={`mns-led${loaded?' is-on':''}`}/>
-      <div className="mns-slot-text">
-        <div className="mns-slot-name">{label}</div>
-        <div className="mns-slot-meta">{loaded?`${count} rows loaded`:hint}</div>
-      </div>
-      <input ref={ref} type="file" accept=".csv" style={{display:'none'}} onChange={e=>handle(e.target.files[0])}/>
-    </div>
-  )
-}
-
 /* ── Feature inventory reference data ────────────────────────── */
 const FEATURE_INVENTORY_ITEMS = [
   { id:'aa',          label:'Auto Attendant',              status:'ok',        note:'Fully supported in NS' },
   { id:'hg',          label:'Hunt Groups / Ring Groups',   status:'ok',        note:'Supported as Ring Groups in NS' },
   { id:'vm_basic',    label:'Voicemail (per-user)',        status:'ok',        note:'Fully supported' },
   { id:'vm_shared',   label:'Shared / Dept Voicemail',    status:'different', note:'Requires manual setup in NS — configure as a separate extension with shared access' },
-  { id:'vm_transfer', label:'Voicemail Transfer (Meta)',   status:'gap',       note:'⚠ Voicemails do NOT transfer to NS. Customer must be told before cutover.' },
+  { id:'vm_transfer', label:'Voicemail Transfer (Meta)',   status:'gap',       note:'Voicemails do NOT transfer to NS. Customer must be told before cutover.' },
   { id:'find_me',     label:'Find Me / Follow Me',         status:'ok',        note:'Answering Rules in NS' },
   { id:'call_fwd',    label:'Call Forwarding',             status:'ok',        note:'Fully supported' },
   { id:'call_park',   label:'Call Park',                   status:'different', note:'Uses feature code on NS (verify current code with Reinvent)' },
@@ -196,7 +174,7 @@ const FEATURE_INVENTORY_ITEMS = [
   { id:'after_hours', label:'After-Hours / Night Mode',    status:'ok',        note:'Time frames + answering rules in NS' },
   { id:'ata',         label:'Analog Extensions (ATA)',     status:'ok',        note:'NS supports ATAs' },
   { id:'e911',        label:'E911 / Emergency Calling',    status:'ok',        note:'Supported — must configure addresses in NS' },
-  { id:'admin_portal',label:'Admin Portal',               status:'different', note:'⚠ Completely different portal — customer must be trained' },
+  { id:'admin_portal',label:'Admin Portal',               status:'different', note:'Completely different portal — customer must be trained' },
   { id:'app',         label:'Softphone / Mobile App',      status:'different', note:'Different app than Meta — customer must download and set up fresh' },
 ]
 
@@ -239,7 +217,11 @@ function StepKickoff({ data, onChange }) {
   function set(f, v) { onChange({ ...data, kickoff: { ...k, [f]: v } }) }
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">Assign ownership before any work starts. One person is responsible for this migration from kickoff to sign-off — no owner means no start date.</p>
+      <div className="mig-eyebrow">Kickoff ownership</div>
+      <p className="mig-lede">Assign ownership before work starts.</p>
+      <Why>
+        <p>One person owns kickoff through sign-off. No owner means no start date.</p>
+      </Why>
       <div className="mig-field-group">
         <div className="mig-field-group-title">Ownership</div>
         <div className="mig-field-row">
@@ -255,13 +237,21 @@ function StepKickoff({ data, onChange }) {
         </div>
       </div>
       <div className="mig-field-group">
+        <div className="mig-eyebrow">Network requirements</div>
         <div className="mig-field-group-title">Network Requirements</div>
         <div className={`mig-check-row${k.networkReqSent?' is-done':''}`} style={{cursor:'pointer'}}
           onClick={()=>set('networkReqSent',!k.networkReqSent)}>
           <div className={`mig-check-box${k.networkReqSent?' is-checked':''}`}>{k.networkReqSent?'✓':''}</div>
           <div className="mig-check-content">
             <div className="mig-check-label">Network requirements sent to customer</div>
-            <div className="mig-check-detail">QoS, VLAN, SIP ALG disable, firewall ports — sent at least 2 weeks before cutover</div>
+            <div className="mig-deadline-row" onClick={e => e.stopPropagation()}>
+              <div className="mig-chip-row" role="list">
+                {['QoS', 'VLAN', 'SIP ALG off', 'Firewall ports'].map(chip => (
+                  <span key={chip} className="mig-chip" role="listitem">{chip}</span>
+                ))}
+              </div>
+              <span className="mig-t-badge" title="At least 2 weeks before cutover">T−14d</span>
+            </div>
           </div>
         </div>
         {k.networkReqSent && (
@@ -273,10 +263,16 @@ function StepKickoff({ data, onChange }) {
         )}
       </div>
       <div className="mig-field-group">
+        <div className="mig-eyebrow">Kickoff notes</div>
         <div className="mig-field-group-title">Notes</div>
+        <TipChips
+          tips={['Customer contacts', 'Special requirements', 'Team notes']}
+          value={k.notes||''}
+          onInsert={(tip) => set('notes', insertTipHeading(k.notes, tip))}
+        />
         <textarea className="mns-input mig-textarea" rows={3}
           value={k.notes||''} onChange={e=>set('notes',e.target.value)}
-          placeholder="Customer contacts, special requirements, anything the team needs to know..."/>
+          placeholder="e.g. IT contact is on site Fridays"/>
       </div>
     </div>
   )
@@ -288,6 +284,8 @@ function StepHardwareAudit({ data, onChange }) {
   const [newModel, setNewModel] = useState('')
   const [newMac, setNewMac] = useState('')
   const [newFw, setNewFw] = useState('')
+  const rows = useRef(new Map())
+  const { crumple, bin } = useCrumpleDelete()
 
   function addDevice() {
     if (!newModel.trim()) return
@@ -311,9 +309,12 @@ function StepHardwareAudit({ data, onChange }) {
 
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">
-        Enter each device — model and current firmware. The app checks minimum versions required for NetSapiens provisioning and flags anything that needs attention before cutover day.
-      </p>
+      {bin}
+      <div className="mig-eyebrow">Hardware audit</div>
+      <p className="mig-lede">Enter each device model and firmware.</p>
+      <Why>
+        <p>App checks NetSapiens minimums and flags issues before cutover.</p>
+      </Why>
 
       {failCount>0 && (
         <div className="mig-audit-banner is-fail">
@@ -331,6 +332,7 @@ function StepHardwareAudit({ data, onChange }) {
       )}
 
       <div className="mig-field-group">
+        <div className="mig-eyebrow">Add device</div>
         <div className="mig-field-group-title">Add Device</div>
         <div className="mig-audit-add-row">
           <select className="mns-input" value={newModel} onChange={e=>setNewModel(e.target.value)} style={{flex:2,minWidth:160}}>
@@ -357,13 +359,17 @@ function StepHardwareAudit({ data, onChange }) {
             {devices.map((d,i)=>{
               const s = statuses[i]
               return (
-                <div key={d.id} className="mig-audit-row">
+                <div
+                  key={d.id}
+                  className="mig-audit-row"
+                  ref={el => { if (el) rows.current.set(d.id, el); else rows.current.delete(d.id) }}
+                >
                   <span className="mig-audit-model">{d.model}</span>
                   <span><input className="mns-input mig-audit-input" value={d.mac} onChange={e=>update(d.id,'mac',e.target.value)} placeholder="MAC"/></span>
                   <span><input className="mns-input mig-audit-input" value={d.currentFw} onChange={e=>update(d.id,'currentFw',e.target.value)} placeholder="e.g. 66.86.0.20"/></span>
                   <span className={`mig-fw-badge ${STATUS_CLASS[s.status]}`} title={s.message}>{STATUS_LABELS[s.status]}</span>
                   <span><input className="mns-input mig-audit-input" value={d.notes} onChange={e=>update(d.id,'notes',e.target.value)} placeholder="Notes"/></span>
-                  <span><button type="button" className="mig-audit-del" onClick={()=>remove(d.id)}>✕</button></span>
+                  <span><button type="button" className="mig-audit-del" onClick={()=>crumple(rows.current.get(d.id), ()=>remove(d.id))}>✕</button></span>
                 </div>
               )
             })}
@@ -406,9 +412,11 @@ function StepFeatureInventory({ data, onChange }) {
 
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">
-        Check every feature this customer uses on Metaswitch. Gaps and differences are flagged automatically so you can disclose them before committing to the migration.
-      </p>
+      <div className="mig-eyebrow">Feature inventory</div>
+      <p className="mig-lede">Check features this customer uses on Meta.</p>
+      <Why>
+        <p>Gaps and differences flag automatically so you can disclose before committing.</p>
+      </Why>
       {gapCount>0 && (
         <div className="mig-audit-banner is-fail">
           ⚠ {gapCount} feature gap{gapCount!==1?'s':''} — disclose to customer before cutover.
@@ -425,7 +433,6 @@ function StepFeatureInventory({ data, onChange }) {
       )}
       <div className="mig-field-group">
         <div className="mig-field-group-title">Feature Checklist</div>
-        <p className="mig-hint">Check the features this customer currently uses on Meta. Gaps and differences are flagged automatically.</p>
         {FEATURE_INVENTORY_ITEMS.map(item=>{
           const entry = inv[item.id] || {}
           const isUsed = !!entry.used
@@ -436,9 +443,16 @@ function StepFeatureInventory({ data, onChange }) {
                 <div className="mig-feat-info">
                   <div className="mig-check-label">{item.label}</div>
                   {isUsed && (
-                    <div className="mig-feat-status" style={{color:STATUS_COLOR[item.status]}}>
-                      {STATUS_LABEL[item.status]} — {item.note}
-                    </div>
+                    <>
+                      <div className="mig-feat-status" style={{color:STATUS_COLOR[item.status]}}>
+                        {STATUS_LABEL[item.status]}
+                      </div>
+                      {item.note && (
+                        <Why label="Note">
+                          <p>{item.note}</p>
+                        </Why>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -462,6 +476,8 @@ function StepSites({ data, onChange }) {
   const sites = data.sites || []
   const [form, setForm] = useState({ name:'', contact:'', contactEmail:'', deviceCount:'', cutoverDate:'' })
   const [showAdd, setShowAdd] = useState(false)
+  const rows = useRef(new Map())
+  const { crumple, bin } = useCrumpleDelete()
 
   function addSite() {
     if (!form.name.trim()) return
@@ -481,10 +497,12 @@ function StepSites({ data, onChange }) {
 
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">
-        For multi-site customers, plan each location separately — own hardware audit, IT contact, and cutover window.
-        Single-site customer? You can skip this step.
-      </p>
+      {bin}
+      <div className="mig-eyebrow">Site planning</div>
+      <p className="mig-lede">Plan each site separately if multi-site.</p>
+      <Why>
+        <p>Own audit, IT contact, and cutover window per site. Single-site customers can skip.</p>
+      </Why>
       <div className="mig-field-group">
         <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
           Sites
@@ -498,10 +516,10 @@ function StepSites({ data, onChange }) {
 
         {sites.length===0 && !showAdd && (
           <div className="mig-sites-empty">
-            <p>No sites added — this is a single-site migration.</p>
-            <p style={{fontSize:12,color:'var(--muted)',margin:'4px 0 16px'}}>
-              Add sites only if this customer has multiple physical locations.
-            </p>
+            <p className="mig-lede">No sites yet — treat as single-site.</p>
+            <Why>
+              <p>Add sites only for multiple physical locations.</p>
+            </Why>
             <button type="button" className="btn btn-primary" onClick={()=>setShowAdd(true)}>+ Add first site</button>
           </div>
         )}
@@ -522,14 +540,18 @@ function StepSites({ data, onChange }) {
         )}
 
         {sites.map(site=>(
-          <div key={site.id} className="mig-site-card">
+          <div
+            key={site.id}
+            className="mig-site-card"
+            ref={el => { if (el) rows.current.set(site.id, el); else rows.current.delete(site.id) }}
+          >
             <div className="mig-site-card-header">
               <span className="mig-site-name">📍 {site.name}</span>
               <select className={`mig-site-status ${STATUS_CLASS[site.status]||''}`}
                 value={site.status} onChange={e=>updateSite(site.id,'status',e.target.value)}>
                 {STATUS_OPTS.map(o=><option key={o} value={o}>{o.charAt(0).toUpperCase()+o.slice(1)}</option>)}
               </select>
-              <button type="button" className="mig-audit-del" onClick={()=>removeSite(site.id)}>✕</button>
+              <button type="button" className="mig-audit-del" onClick={()=>crumple(rows.current.get(site.id), ()=>removeSite(site.id))}>✕</button>
             </div>
             <div className="mig-site-card-body">
               <div className="mig-site-meta"><span>IT Contact</span><span>{site.contact||'—'}</span></div>
@@ -585,11 +607,14 @@ function StepGoNoGo({ data, onChange }) {
 
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">
-        All items must pass before cutover is scheduled. Items are auto-derived from earlier steps. Manually override individual items if needed. Reviewer must sign off to unlock.
-      </p>
+      <div className="mig-eyebrow">Go / no-go</div>
+      <p className="mig-lede">All items must pass before cutover.</p>
+      <Why>
+        <p>Items auto-derive from earlier steps; override if needed. Reviewer sign-off unlocks.</p>
+      </Why>
       {categories.map(cat=>(
         <div key={cat} className="mig-field-group">
+          <div className="mig-eyebrow">{cat}</div>
           <div className="mig-field-group-title">{cat}</div>
           {checks.filter(c=>c.category===cat).map(check=>{
             const pass = getStatus(check)
@@ -617,6 +642,7 @@ function StepGoNoGo({ data, onChange }) {
         </div>
       ))}
       <div className="mig-field-group">
+        <div className="mig-eyebrow">Reviewer sign-off</div>
         <div className="mig-field-group-title">Reviewer Sign-off</div>
         <div className="mig-field-row">
           <Field label="Reviewer name">
@@ -648,6 +674,8 @@ function StepGoNoGo({ data, onChange }) {
 /* ── Step 10: Cutover Runbook ────────────────────────────────── */
 function StepRunbook({ data, onChange }) {
   const items = data.runbook || []
+  const rows = useRef(new Map())
+  const { crumple, bin } = useCrumpleDelete()
   function init() {
     onChange({ ...data, runbook:RUNBOOK_DEFAULTS.map(r=>({...r,id:makeId(),done:false,notes:''})) })
   }
@@ -660,7 +688,11 @@ function StepRunbook({ data, onChange }) {
 
   if (!items.length) return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">A day-of checklist keeps the cutover on track. Load the standard runbook or start from scratch.</p>
+      <div className="mig-eyebrow">Cutover runbook</div>
+      <p className="mig-lede">Load the day-of cutover checklist.</p>
+      <Why>
+        <p>Keeps cutover on track. Load standard runbook or start blank.</p>
+      </Why>
       <div className="mig-field-group">
         <div className="mig-sites-empty">
           <p>No runbook yet.</p>
@@ -675,7 +707,9 @@ function StepRunbook({ data, onChange }) {
 
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">Check off each item on cutover day. Time offsets are relative to T+0:00 (port activation / cutover start).</p>
+      {bin}
+      <div className="mig-eyebrow">Runbook timing</div>
+      <p className="mig-lede">Check off each item on cutover day.</p>
       <div className="mig-build-progress" style={{marginBottom:16}}>
         <div className="mig-progress-bar-wrap">
           <div className="mig-progress-bar" style={{width:`${Math.round((doneCount/Math.max(items.length,1))*100)}%`}}/>
@@ -687,23 +721,39 @@ function StepRunbook({ data, onChange }) {
           Runbook
           <button type="button" className="btn btn-secondary" style={{marginLeft:'auto',padding:'3px 10px',fontSize:12}} onClick={addCustom}>+ Add item</button>
         </div>
-        {items.map(r=>(
-          <div key={r.id} className={`mig-check-row${r.done?' is-done':''}`} style={{alignItems:'flex-start',gap:10}}>
-            <div className={`mig-check-box${r.done?' is-checked':''}`}
-              style={{marginTop:2,cursor:'pointer',flexShrink:0}} onClick={()=>toggle(r.id)}>{r.done?'✓':''}</div>
-            <div style={{flex:1}}>
-              <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                <input className="mns-input" style={{width:70,fontSize:12}} value={r.time} onChange={e=>updateItem(r.id,'time',e.target.value)} placeholder="T+0:00"/>
-                <input className="mns-input" style={{flex:1,fontSize:12}} value={r.task} onChange={e=>updateItem(r.id,'task',e.target.value)} placeholder="Task description"/>
-                <button type="button" className="mig-audit-del" onClick={()=>removeItem(r.id)}>✕</button>
+        <div className="mig-t-rail" role="list">
+          {items.map(r=>(
+            <div
+              key={r.id}
+              className={`mig-t-rail-row${r.done?' is-done':''}`}
+              role="listitem"
+              ref={el => { if (el) rows.current.set(r.id, el); else rows.current.delete(r.id) }}
+            >
+              <div className="mig-t-mark" aria-label={`Offset ${r.time || 'T+0:00'}`}>
+                <input
+                  className="mig-t-mark-input"
+                  value={r.time}
+                  onChange={e=>updateItem(r.id,'time',e.target.value)}
+                  placeholder="T+0:00"
+                />
               </div>
-              {!r.done && (
-                <input className="mns-input" style={{width:'100%',fontSize:11,marginTop:4}}
-                  value={r.notes||''} onChange={e=>setNotes(r.id,e.target.value)} placeholder="Notes..."/>
-              )}
+              <div className={`mig-check-box${r.done?' is-checked':''}`}
+                style={{cursor:'pointer',flexShrink:0}}
+                onClick={()=>toggle(r.id)}
+                role="checkbox"
+                aria-checked={!!r.done}
+              >{r.done?'✓':''}</div>
+              <div className="mig-t-rail-body">
+                <input className="mns-input" style={{width:'100%',fontSize:12}} value={r.task} onChange={e=>updateItem(r.id,'task',e.target.value)} placeholder="Task description"/>
+                {!r.done && (
+                  <input className="mns-input" style={{width:'100%',fontSize:11,marginTop:4}}
+                    value={r.notes||''} onChange={e=>setNotes(r.id,e.target.value)} placeholder="Notes..."/>
+                )}
+              </div>
+              <button type="button" className="mig-audit-del" onClick={()=>crumple(rows.current.get(r.id), ()=>removeItem(r.id))} aria-label="Remove item">✕</button>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   )
@@ -712,6 +762,8 @@ function StepRunbook({ data, onChange }) {
 /* ── Step 11: Phone Online Tracker ───────────────────────────── */
 function StepPhoneTracker({ data, onChange }) {
   const tracked = data.phoneTracker || []
+  const rows = useRef(new Map())
+  const { crumple, bin } = useCrumpleDelete()
 
   function populate() {
     const existing = new Set(tracked.map(t=>t.mac||t.ext).filter(Boolean))
@@ -736,7 +788,12 @@ function StepPhoneTracker({ data, onChange }) {
 
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">Check off each phone as it comes online on cutover day. Sync from Devices to auto-populate.</p>
+      {bin}
+      <div className="mig-eyebrow">Phone tracker</div>
+      <p className="mig-lede">Check phones off as they come online.</p>
+      <Why>
+        <p>Sync from Devices to auto-populate the list.</p>
+      </Why>
       {tracked.length>0 && (
         <div className="mig-build-progress" style={{marginBottom:16}}>
           <div className="mig-progress-bar-wrap">
@@ -765,12 +822,22 @@ function StepPhoneTracker({ data, onChange }) {
             <p>No phones added.</p>
             {(data.devices||[]).length>0
               ? <button type="button" className="btn btn-primary" onClick={populate}>Sync from Devices step ({data.devices.length} devices)</button>
-              : <p style={{fontSize:12,color:'var(--muted)'}}>Add devices in the Devices step first, or add phones manually here.</p>
+              : <>
+                  <p className="mig-lede">Add devices first, or add phones here.</p>
+                  <Why>
+                    <p>Use the Devices step to sync, or add phones manually.</p>
+                  </Why>
+                </>
             }
           </div>
         )}
         {tracked.map(t=>(
-          <div key={t.id} className={`mig-check-row${t.online?' is-done':''}`} style={{alignItems:'center',gap:8,flexWrap:'wrap'}}>
+          <div
+            key={t.id}
+            className={`mig-check-row${t.online?' is-done':''}`}
+            style={{alignItems:'center',gap:8,flexWrap:'wrap'}}
+            ref={el => { if (el) rows.current.set(t.id, el); else rows.current.delete(t.id) }}
+          >
             <div className={`mig-check-box${t.online?' is-checked':''}`} style={{cursor:'pointer',flexShrink:0}} onClick={()=>toggle(t.id)}>{t.online?'✓':''}</div>
             <input className="mns-input" style={{width:64,fontSize:12}} value={t.ext} onChange={e=>updateField(t.id,'ext',e.target.value)} placeholder="Ext"/>
             <input className="mns-input" style={{flex:1,minWidth:100,fontSize:12}} value={t.name} onChange={e=>updateField(t.id,'name',e.target.value)} placeholder="Name / DN"/>
@@ -782,7 +849,7 @@ function StepPhoneTracker({ data, onChange }) {
             <span style={{fontSize:12,fontWeight:600,color:t.online?'var(--ok)':'var(--muted)',width:52,textAlign:'right',flexShrink:0}}>
               {t.online?'Online':'Offline'}
             </span>
-            <button type="button" className="mig-audit-del" onClick={()=>remove(t.id)}>✕</button>
+            <button type="button" className="mig-audit-del" onClick={()=>crumple(rows.current.get(t.id), ()=>remove(t.id))}>✕</button>
           </div>
         ))}
       </div>
@@ -805,7 +872,11 @@ function StepTestCalls({ data, onChange }) {
 
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">After cutover, run every test. Mark pass or fail. Document issues so they can be tracked to resolution.</p>
+      <div className="mig-eyebrow">Test calls</div>
+      <p className="mig-lede">Run every post-cutover test.</p>
+      <Why>
+        <p>Mark pass or fail. Document issues to track resolution.</p>
+      </Why>
       {failCount>0 && (
         <div className="mig-audit-banner is-fail">✕ {failCount} test{failCount!==1?'s':''} failing — resolve before closing the job.</div>
       )}
@@ -856,8 +927,13 @@ function StepSignoff({ data, onChange }) {
 
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">Final step. Get the customer's formal sign-off confirming the system is working before the job is closed.</p>
+      <div className="mig-eyebrow">Customer signoff</div>
+      <p className="mig-lede">Get formal customer sign-off.</p>
+      <Why>
+        <p>Confirms the system works before the job closes.</p>
+      </Why>
       <div className="mig-field-group">
+        <div className="mig-eyebrow">Pre-signoff summary</div>
         <div className="mig-field-group-title">Pre-Sign-off Summary</div>
         <div className={`mig-check-row${allTestsPassed?' is-done':''}`}>
           <div className={`mig-check-box${allTestsPassed?' is-checked':''}`}>{allTestsPassed?'✓':''}</div>
@@ -873,6 +949,7 @@ function StepSignoff({ data, onChange }) {
         </div>
       </div>
       <div className="mig-field-group">
+        <div className="mig-eyebrow">Customer sign-off</div>
         <div className="mig-field-group-title">Customer Sign-off</div>
         <div className="mig-field-row">
           <Field label="Customer representative name">
@@ -907,9 +984,14 @@ function StepAccount({ data, onChange }) {
   const TZS    = ['US/Central','US/Eastern','US/Mountain','US/Pacific','US/Hawaii','US/Alaska']
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">Enter the NetSapiens account settings. These defaults apply to all users — you can override per-user in the next step.</p>
+      <div className="mig-eyebrow">Account setup</div>
+      <p className="mig-lede">Enter NetSapiens account settings.</p>
+      <Why>
+        <p>Defaults apply to all users; override per-user next.</p>
+      </Why>
 
       <div className="mig-field-group">
+        <div className="mig-eyebrow">Account identity</div>
         <div className="mig-field-group-title">Identity</div>
         <div className="mig-field-row">
           <Field label="NS Domain *">
@@ -928,6 +1010,7 @@ function StepAccount({ data, onChange }) {
       </div>
 
       <div className="mig-field-group">
+        <div className="mig-eyebrow">Account network</div>
         <div className="mig-field-group-title">Network</div>
         <div className="mig-field-row">
           <Field label="Server">
@@ -943,6 +1026,7 @@ function StepAccount({ data, onChange }) {
       </div>
 
       <div className="mig-field-group">
+        <div className="mig-eyebrow">User defaults</div>
         <div className="mig-field-group-title">User Defaults</div>
         <div className="mig-field-row">
           <Field label="Default Scope">
@@ -967,6 +1051,7 @@ function StepAccount({ data, onChange }) {
       </div>
 
       <div className="mig-field-group">
+        <div className="mig-eyebrow">Emergency calling</div>
         <div className="mig-field-group-title">E911</div>
         <div className="mig-field-row">
           <Field label="Address 1">
@@ -1028,6 +1113,8 @@ function StepUsers({ data, onChange }) {
 
   function updateUser(id, f, v) { onChange({ ...data, users:(data.users||[]).map(u=>u.id===id?{...u,[f]:v}:u) }) }
   function addUser() { onChange({ ...data, users:[...(data.users||[]),{id:makeId(),dn:'',ext:'',firstName:'',lastName:'-',email:'',vmPin:'',dept:'',site:'',did:''}] }) }
+  const userRows = useRef(new Map())
+  const { crumple: crumpleUser, bin: userBin } = useCrumpleDelete()
   function removeUser(id) { onChange({ ...data, users:(data.users||[]).filter(u=>u.id!==id) }) }
 
   function applyBulk() {
@@ -1051,15 +1138,30 @@ function StepUsers({ data, onChange }) {
 
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">Drop the Metaswitch Lines CSV to auto-fill users, then enter each NetSapiens extension. The export does not provide extensions, so none are guessed from the phone number.</p>
+      <div className="mig-eyebrow">User import</div>
+      <p className="mig-lede">Drop the Metaswitch Lines CSV.</p>
+      <Why>
+        <p>Enter each NS extension. Export has no extensions — none are guessed from the number.</p>
+      </Why>
 
       <div className="mig-field-group">
+        <div className="mig-eyebrow">Import from Metaswitch</div>
         <div className="mig-field-group-title">Import from Metaswitch</div>
-        <div className="mns-slots">
-          <UploadSlot label="Lines CSV" hint="Directory number + Name columns"
-            loaded={(data.users||[]).length>0} count={(data.users||[]).length}
-            onFile={(rows,name)=>handleCSV(rows,name)}/>
-        </div>
+        <Dropzone
+          title="Lines CSV"
+          subtitle="Directory number + Name columns"
+          accept=".csv,text/csv"
+          maxFiles={1}
+          onUpload={async (file, { onProgress }) => {
+            onProgress(0.2)
+            const text = await file.text()
+            onProgress(0.7)
+            const rows = parseCSV(text)
+            handleCSV(rows, file.name)
+            onProgress(1)
+            return { count: rows.length }
+          }}
+        />
         {importLog.length > 0 && (
           <div className="mns-detect-log" style={{marginTop:8}}>
             {importLog.map((m,i)=><span key={i} className="mns-detect-chip">✓ {m}</span>)}
@@ -1069,8 +1171,12 @@ function StepUsers({ data, onChange }) {
 
       {extRows.length > 0 && (
         <div className="mig-field-group">
+          <div className="mig-eyebrow">Bulk extensions</div>
           <div className="mig-field-group-title">Bulk Extensions</div>
-          <p className="mig-hint">Paste one extension per line in the same order as the users below. Counts must match before apply.</p>
+          <p className="mig-lede">Paste one extension per line.</p>
+          <Why>
+            <p>Same order as users below. Counts must match before apply.</p>
+          </Why>
           <textarea
             className="mig-textarea"
             rows={Math.min(8, Math.max(3, extRows.length))}
@@ -1106,6 +1212,7 @@ function StepUsers({ data, onChange }) {
       )}
 
       <div className="mig-field-group">
+        {userBin}
         <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
           Users
           <span className="mig-count-badge">{(data.users||[]).length}</span>
@@ -1137,7 +1244,11 @@ function StepUsers({ data, onChange }) {
                     const clash = collisions.has(u.ext)
                     const missing = missingIds.has(u.id)
                     return (
-                      <tr key={u.id} className={clash||missing?'mns-row-collision':''}>
+                      <tr
+                        key={u.id}
+                        className={clash||missing?'mns-row-collision':''}
+                        ref={el => { if (el) userRows.current.set(u.id, el); else userRows.current.delete(u.id) }}
+                      >
                         <td className="mns-td-mono">{u.dn||'—'}</td>
                         <td>
                           <input
@@ -1165,7 +1276,7 @@ function StepUsers({ data, onChange }) {
                             {SCOPES.map(s=><option key={s}>{s}</option>)}
                           </select>
                         </td>
-                        <td><button type="button" className="mig-del-btn" onClick={()=>removeUser(u.id)}>✕</button></td>
+                        <td><button type="button" className="mig-del-btn" onClick={()=>crumpleUser(userRows.current.get(u.id), ()=>removeUser(u.id))}>✕</button></td>
                       </tr>
                     )
                   })}
@@ -1217,6 +1328,8 @@ function StepDevices({ data, onChange }) {
 
   function updateDevice(id, f, v) { onChange({ ...data, devices:data.devices.map(d=>d.id===id?{...d,[f]:v}:d) }) }
   function addDevice() { onChange({ ...data, devices:[...(data.devices||[]),{id:makeId(),mac:'',model:'',dn:'',line1:'',line2:'',notes:''}] }) }
+  const deviceRows = useRef(new Map())
+  const { crumple: crumpleDevice, bin: deviceBin } = useCrumpleDelete()
   function removeDevice(id) { onChange({ ...data, devices:(data.devices||[]).filter(d=>d.id!==id) }) }
   function setSharedExtensionApproved(extension, approved) {
     const key = approvalKeys[extension]
@@ -1228,15 +1341,30 @@ function StepDevices({ data, onChange }) {
 
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">Drop the Managed Devices CSV to auto-fill. Line 1 is matched from the user list by DN automatically.</p>
+      <div className="mig-eyebrow">Device import</div>
+      <p className="mig-lede">Drop the Managed Devices CSV.</p>
+      <Why>
+        <p>Line 1 matches the user list by DN automatically.</p>
+      </Why>
 
       <div className="mig-field-group">
+        <div className="mig-eyebrow">Import from Metaswitch</div>
         <div className="mig-field-group-title">Import from Metaswitch</div>
-        <div className="mns-slots">
-          <UploadSlot label="Managed Devices CSV" hint="MAC Address + Device Model columns"
-            loaded={(data.devices||[]).length>0} count={(data.devices||[]).length}
-            onFile={(rows,name)=>handleCSV(rows,name)}/>
-        </div>
+        <Dropzone
+          title="Managed Devices CSV"
+          subtitle="MAC Address + Device Model columns"
+          accept=".csv,text/csv"
+          maxFiles={1}
+          onUpload={async (file, { onProgress }) => {
+            onProgress(0.2)
+            const text = await file.text()
+            onProgress(0.7)
+            const rows = parseCSV(text)
+            handleCSV(rows, file.name)
+            onProgress(1)
+            return { count: rows.length }
+          }}
+        />
         {importLog.length > 0 && (
           <div className="mns-detect-log" style={{marginTop:8}}>
             {importLog.map((m,i)=><span key={i} className="mns-detect-chip">✓ {m}</span>)}
@@ -1245,6 +1373,7 @@ function StepDevices({ data, onChange }) {
       </div>
 
       <div className="mig-field-group">
+        {deviceBin}
         <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
           Devices
           <span className="mig-count-badge">{(data.devices||[]).length}</span>
@@ -1283,7 +1412,7 @@ function StepDevices({ data, onChange }) {
                   const extension = normalizeMigrationExtension(l1)
                   const sharedExtension = unapprovedExtensions.has(extension)
                   return (
-                    <tr key={d.id} className={sharedExtension?'mns-row-collision':''}>
+                    <tr key={d.id} className={sharedExtension?'mns-row-collision':''} ref={el => { if (el) deviceRows.current.set(d.id, el); else deviceRows.current.delete(d.id) }}>
                       <td><input className="mig-cell-input mig-cell-mono" value={d.mac} onChange={e=>updateDevice(d.id,'mac',e.target.value)} placeholder="aabbccddeeff"/></td>
                       <td><input className="mig-cell-input" value={d.model} onChange={e=>updateDevice(d.id,'model',e.target.value)} placeholder="Yealink T54W"/></td>
                       <td className="mig-device-ext-cell">
@@ -1292,7 +1421,7 @@ function StepDevices({ data, onChange }) {
                       </td>
                       <td><input className="mig-cell-input" value={l2} onChange={e=>updateDevice(d.id,'line2',e.target.value)}/></td>
                       <td><input className="mig-cell-input" value={d.notes} onChange={e=>updateDevice(d.id,'notes',e.target.value)}/></td>
-                      <td><button type="button" className="mig-del-btn" onClick={()=>removeDevice(d.id)}>✕</button></td>
+                      <td><button type="button" className="mig-del-btn" onClick={()=>crumpleDevice(deviceRows.current.get(d.id), ()=>removeDevice(d.id))}>✕</button></td>
                     </tr>
                   )
                 })}
@@ -1325,10 +1454,11 @@ function StepSystem({ data, onChange }) {
 
   return (
     <div className="mig-step-body">
-      <p className="mig-step-desc">
-        Build Meta and NetSapiens side by side. Use this checklist so you are not retyping the same
-        routing into this app — configure both platforms directly, then mark each item complete.
-      </p>
+            <div className="mig-eyebrow">System config</div>
+      <p className="mig-lede">Build Meta and NetSapiens side by side.</p>
+      <Why>
+        <p>Checklist avoids retyping routing here — configure both platforms, then mark complete.</p>
+      </Why>
 
       <div className="mig-field-group">
         <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
@@ -1338,10 +1468,10 @@ function StepSystem({ data, onChange }) {
             <span className="mig-ok-badge">Complete</span>
           )}
         </div>
-        <p className="mig-hint">
-          Open Meta and NetSapiens in separate windows. Review the live Meta config, rebuild it in NS,
-          then check it off here.
-        </p>
+              <p className="mig-lede">Open Meta and NetSapiens side by side.</p>
+      <Why>
+        <p>Review live Meta, rebuild in NS, check off here.</p>
+      </Why>
         {SYSTEM_CONFIG_CHECKS.map(item => {
           const done = !!checks[item.key]
           return (
@@ -1469,8 +1599,12 @@ function StepBuild({ data, onChange }) {
 
       {/* Downloads */}
       <div className="mig-field-group">
+        <div className="mig-eyebrow">NS import files</div>
         <div className="mig-field-group-title">NS Import Files</div>
-        <p className="mig-hint">Download in order. Import users before phones so extensions can bind.</p>
+        <p className="mig-lede">Download imports in order.</p>
+        <Why>
+          <p>Import users before phones so extensions can bind.</p>
+        </Why>
         <div className="mns-downloads">
           {downloads.map(dl => (
             <div key={dl.name} className="mns-dl-row">
@@ -1491,11 +1625,12 @@ function StepBuild({ data, onChange }) {
       </div>
 
       <div className="mig-field-group">
+        <div className="mig-eyebrow">Build checklist</div>
         <div className="mig-field-group-title" style={{display:'flex',alignItems:'center',gap:8}}>
           System Config
           <span className="mig-count-badge">{systemDone}/{SYSTEM_CONFIG_CHECKS.length}</span>
         </div>
-        <p className="mig-hint">Tracked in the System Config step while you build Meta and NetSapiens side by side.</p>
+        <p className="mig-lede">Tracked while you build Meta and NetSapiens side by side.</p>
         {SYSTEM_CONFIG_CHECKS.map(item => (
           <div key={item.key} className={`mig-check-row${systemConfig[item.key]?' is-done':''}`}>
             <div className={`mig-check-box${systemConfig[item.key]?' is-checked':''}`}>{systemConfig[item.key]?'✓':''}</div>
@@ -1508,6 +1643,7 @@ function StepBuild({ data, onChange }) {
 
       {/* Post-migration tests */}
       <div className="mig-field-group">
+        <div className="mig-eyebrow">Post-migration tests</div>
         <div className="mig-field-group-title">Post-Migration Tests</div>
         <CheckRow bkey="test_main"  label="Main number rings correctly"/>
         <CheckRow bkey="test_aa"    label="Auto attendant keys route correctly"/>
@@ -1597,6 +1733,16 @@ function normalizeLoadedMigration(loaded) {
     sharedDeviceApprovals: loaded.sharedDeviceApprovals || [],
     systemConfig: loaded.systemConfig || {},
     build: loaded.build || {},
+    // Claude phase fields — fill defaults for older saved migrations.
+    kickoff: { ...base.kickoff, ...(loaded.kickoff || {}) },
+    hardwareAudit: loaded.hardwareAudit || [],
+    featureInventory: loaded.featureInventory || {},
+    sites: loaded.sites || [],
+    gonogo: { ...base.gonogo, ...(loaded.gonogo || {}) },
+    runbook: loaded.runbook || [],
+    phoneTracker: loaded.phoneTracker || [],
+    testCalls: loaded.testCalls || {},
+    signoff: { ...base.signoff, ...(loaded.signoff || {}) },
   }
 }
 
@@ -1626,7 +1772,7 @@ export default function MigrationWorkspace({ jobId }) {
     <StepUsers           key="users"    data={data} onChange={handleChange}/>,
     <StepDevices         key="devices"  data={data} onChange={handleChange}/>,
     <StepSystem          key="system"   data={data} onChange={handleChange}/>,
-    <StepBuild           key="build"    data={data} onChange={handleChange} jobId={jobId}/>,
+    <StepBuild           key="build"    data={data} onChange={handleChange}/>,
     <StepGoNoGo          key="gonogo"   data={data} onChange={handleChange}/>,
     <StepRunbook         key="runbook"  data={data} onChange={handleChange}/>,
     <StepPhoneTracker    key="phones"   data={data} onChange={handleChange}/>,

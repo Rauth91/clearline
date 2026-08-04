@@ -11,6 +11,7 @@ import {
 } from '../lib/callFlowShape.js'
 import {
   downloadDesignPdf,
+  designExportFilename,
   exportDesignDoc,
   exportDesignHtml,
   sectionProgress,
@@ -26,6 +27,7 @@ import {
 import { canApplyRemoteRefresh, onDataChanged } from '../lib/dataEvents.js'
 import { registerWorkspaceFlush } from '../lib/reloadGate.js'
 import { ConflictBanner } from './ConflictReview.jsx'
+import DownloadButton from './DownloadButton.jsx'
 import {
   DesignAssumptionsPanel,
   DesignMainNumbersPanel,
@@ -107,7 +109,6 @@ const MemoCallFlowDiagram = memo(CallFlowDiagram)
 export default function SystemDesign({ jobId }) {
   const [design, setDesign] = useState(() => loadDesign(jobId))
   const [importNote, setImportNote] = useState(null)
-  const [exportingPdf, setExportingPdf] = useState(false)
   const [activePanel, setActivePanel] = useState(null)
   const [surveyDrift, setSurveyDrift] = useState(() => isDesignOutOfDate(jobId))
   const dirtyRef = useRef(false)
@@ -317,16 +318,11 @@ export default function SystemDesign({ jobId }) {
     setActivePanel(null)
   }
 
-  async function exportPdf() {
-    setExportingPdf(true)
-    try {
-      await downloadDesignPdf(design, completion)
-    } catch (err) {
-      console.error(err)
-      alert('Could not create the PDF. Try Export HTML as a backup.')
-    } finally {
-      setExportingPdf(false)
-    }
+  async function exportPdfRun({ onProgress }) {
+    onProgress(0.2)
+    const blob = await downloadDesignPdf(design, completion)
+    onProgress(1)
+    return blob
   }
 
   function movePanel(delta) {
@@ -409,9 +405,13 @@ export default function SystemDesign({ jobId }) {
         <button type="button" className="btn btn-secondary" onClick={importFromSurvey}>
           Import from Survey
         </button>
-        <button type="button" className="btn btn-primary" onClick={exportPdf} disabled={exportingPdf}>
-          {exportingPdf ? 'Creating PDF…' : 'Export PDF'}
-        </button>
+        <DownloadButton
+          className="btn-primary"
+          label="Export PDF"
+          filename={designExportFilename(design, 'pdf')}
+          run={exportPdfRun}
+          onError={() => alert('Could not create the PDF. Try Export HTML as a backup.')}
+        />
         <details className="export-menu">
           <summary className="btn btn-secondary">More</summary>
           <div className="export-menu-panel">

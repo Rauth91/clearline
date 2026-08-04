@@ -2,14 +2,14 @@
  * AccountDetail — account parent with Call flow | Jobs tabs
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import AccountCallFlow from './AccountCallFlow.jsx'
-import NsSync from './NsSync.jsx'
-import { ChangeRequestInbox } from './CustomerPortal.jsx'
 import {
+  computeJobStatus,
   createJob,
   deleteJob,
+  jobWorkspacePath,
   listJobsForAccount,
   openJob,
 } from '../lib/jobModel.js'
@@ -20,15 +20,7 @@ import { canApplyRemoteRefresh, onDataChanged } from '../lib/dataEvents.js'
 const TABS = [
   { id: 'jobs', label: 'Jobs' },
   { id: 'flow', label: 'Call flow' },
-  { id: 'ns', label: 'NS Sync' },
-  { id: 'requests', label: 'Requests' },
 ]
-
-const STAGE_LABELS = {
-  survey: 'Survey',
-  design: 'Design',
-  golive: 'Go-Live',
-}
 
 export default function AccountDetail({ accountId, refreshKey, onBack }) {
   const [tab, setTab] = useState('jobs')
@@ -36,13 +28,11 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
   const [jobs, setJobs] = useState(() => listJobsForAccount(accountId))
   const [showNewJob, setShowNewJob] = useState(false)
   const [form, setForm] = useState({ customer: '', site: '', ticket: '', jobType: 'install' })
-  const [portalCopied, setPortalCopied] = useState(false)
-  const copyTimerRef = useRef(null)
 
   useEffect(() => {
     setAccount(getAccount(accountId))
     setJobs(listJobsForAccount(accountId))
-    setTab('flow')
+    setTab('jobs')
   }, [accountId, refreshKey])
 
   useEffect(() => {
@@ -104,8 +94,7 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
     setShowNewJob(false)
     openJob(job.id)
     setJobs(listJobsForAccount(accountId))
-    const dest = form.jobType === 'migration' ? `/job/${job.id}/migration` : `/job/${job.id}`
-    navigate(dest)
+    navigate(jobWorkspacePath(job))
   }
 
   return (
@@ -123,36 +112,8 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
         <div className="survey-actions">
           <button
             type="button"
-            className={`btn ${portalCopied ? 'btn-primary' : 'btn-ghost'}`}
-            title="Copy customer portal link to clipboard"
-            onClick={() => {
-              const url = `${window.location.origin}${window.location.pathname}#/portal/${account.id}`
-              navigator.clipboard?.writeText(url).then(() => {
-                setPortalCopied(true)
-                clearTimeout(copyTimerRef.current)
-                copyTimerRef.current = setTimeout(() => setPortalCopied(false), 2500)
-              }).catch(() => {
-                // Fallback for browsers without clipboard API
-                const el = document.createElement('textarea')
-                el.value = url
-                el.style.position = 'fixed'
-                el.style.opacity = '0'
-                document.body.appendChild(el)
-                el.select()
-                document.execCommand('copy')
-                document.body.removeChild(el)
-                setPortalCopied(true)
-                clearTimeout(copyTimerRef.current)
-                copyTimerRef.current = setTimeout(() => setPortalCopied(false), 2500)
-              })
-            }}
-          >
-            {portalCopied ? 'Link copied!' : 'Share portal'}
-          </button>
-          <button
-            type="button"
             className="btn btn-secondary"
-            onClick={() => (onBack ? onBack() : navigate('/'))}
+            onClick={() => (onBack ? onBack() : navigate('/accounts'))}
           >
             Back
           </button>
@@ -182,33 +143,8 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
           <AccountCallFlow
             accountId={accountId}
             embedded
-            onBack={() => (onBack ? onBack() : navigate('/'))}
+            onBack={() => (onBack ? onBack() : navigate('/accounts'))}
           />
-        </div>
-      )}
-
-      {tab === 'ns' && (
-        <div className="account-detail-ns">
-          <NsSync
-            account={account}
-            onImported={(updated) => {
-              setAccount(updated)
-              setTab('flow')
-            }}
-          />
-        </div>
-      )}
-
-      {tab === 'requests' && (
-        <div className="account-detail-ns">
-          <div className="ns-sync-header" style={{ marginBottom: 16 }}>
-            <div className="ns-sync-title">Customer change requests</div>
-            <div className="ns-sync-sub">
-              Change requests submitted by your customer via the portal link.
-              Click &ldquo;Share portal&rdquo; above to give your customer their link.
-            </div>
-          </div>
-          <ChangeRequestInbox accountId={accountId} />
         </div>
       )}
 
@@ -226,15 +162,15 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
                 <button type="button" className="btn btn-primary" onClick={openNewJob}>+ New job</button>
               </div>
               {jobs.map(job => {
-                const isMig = job.jobType === 'migration'
-                const dest = isMig ? `/job/${job.id}/migration` : `/job/${job.id}`
+                const dest = jobWorkspacePath(job)
                 return (
                   <div key={job.id} className="acct-job-row">
                     <button type="button" className="acct-job-row-main"
                       onClick={() => { openJob(job.id); navigate(dest) }}>
-                      <span className={`acct-job-type${isMig ? ' is-migration' : ''}`}>
-                        {isMig ? 'Migration' : 'Install'}
+                      <span className={`acct-job-type${job.jobType === 'migration' ? ' is-migration' : ''}`}>
+                        {job.jobType === 'migration' ? 'Migration' : 'Install'}
                       </span>
+                      <JobStatusBadge jobId={job.id} />
                       <span className="acct-job-name">{job.customer || 'Untitled'}{job.site ? ` · ${job.site}` : ''}</span>
                       <span className="acct-job-date">{job.updatedAt ? new Date(job.updatedAt).toLocaleDateString() : ''}</span>
                       <span className="acct-job-arrow">→</span>
@@ -313,6 +249,15 @@ export default function AccountDetail({ accountId, refreshKey, onBack }) {
         document.body,
       )}
     </section>
+  )
+}
+
+function JobStatusBadge({ jobId }) {
+  const status = computeJobStatus(jobId)
+  return (
+    <span className={`acct-job-status acct-job-status-${status}`}>
+      {status === 'survey' ? 'Survey' : status === 'design' ? 'Design' : status === 'install' ? 'Install' : 'Done'}
+    </span>
   )
 }
 

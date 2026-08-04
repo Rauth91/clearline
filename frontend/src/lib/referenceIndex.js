@@ -1,11 +1,12 @@
 /**
- * Flattened searchable index over Yealink codes + Codec/QoS reference data.
+ * Flattened searchable index over Yealink codes + Codec/QoS + firmware table.
  */
 
-import { YEALINK_CODES } from '../components/YealinkCodes.jsx'
-import { CODECS, DSCP, QOS_TIPS, SIP_CODES } from '../components/CodecRef.jsx'
+import { YEALINK_CODES } from '../data/yealinkCodes.js'
+import { CODECS, DSCP, QOS_TIPS, SIP_CODES } from '../data/codecRef.js'
+import { FIRMWARE_TABLE } from './firmwareTable.js'
 
-/** @typedef {{ source: 'yealink' | 'codec', title: string, subtitle: string, body: string, keywords: string[] }} RefRecord */
+/** @typedef {{ source: 'yealink' | 'codec' | 'firmware', title: string, subtitle: string, body: string, keywords: string[] }} RefRecord */
 
 /** @type {RefRecord[]} */
 export const REFERENCE_RECORDS = [
@@ -52,6 +53,25 @@ export const REFERENCE_RECORDS = [
     body: c.desc,
     keywords: [c.code, c.label, c.class, c.severity, 'sip'],
   })),
+  ...FIRMWARE_TABLE.map(e => ({
+    source: /** @type {const} */ ('firmware'),
+    title: e.model,
+    subtitle: e.eol
+      ? 'EOL'
+      : (e.minFw ? `Min ${e.minFw}` : 'No minimum listed'),
+    body: e.eolNote || (e.minFw ? `Minimum firmware ${e.minFw} for NetSapiens provisioning.` : 'Check platform notes.'),
+    keywords: [
+      e.model,
+      e.minFw,
+      e.eol ? 'eol' : 'supported',
+      e.eolNote,
+      'firmware',
+      'yealink',
+      'polycom',
+      'cisco',
+      'algo',
+    ].filter(Boolean).map(String),
+  })),
 ]
 
 function fieldScore(text, q) {
@@ -86,7 +106,7 @@ export function scoreReferenceRecord(record, query) {
 
 /**
  * @param {string} query
- * @param {{ limit?: number, source?: 'yealink' | 'codec' }} [opts]
+ * @param {{ limit?: number, source?: 'yealink' | 'codec' | 'firmware' }} [opts]
  * @returns {Array<RefRecord & { score: number }>}
  */
 export function searchReference(query, opts = {}) {
@@ -111,5 +131,6 @@ export function searchReference(query, opts = {}) {
 export function groupReferenceResults(results) {
   const yealink = results.filter(r => r.source === 'yealink')
   const codec = results.filter(r => r.source === 'codec')
-  return { yealink, codec }
+  const firmware = results.filter(r => r.source === 'firmware')
+  return { yealink, codec, firmware }
 }

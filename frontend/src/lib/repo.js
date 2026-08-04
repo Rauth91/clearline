@@ -960,59 +960,66 @@ export function jobCompletion(jobId) {
   }
 }
 
-function downloadClearlinePayload(payload, meta) {
+function clearlineJobFilename(meta) {
   const name = (meta.customer || meta.site || 'job')
     .replace(/\W+/g, '_')
     .replace(/^_|_$/g, '')
     .toLowerCase() || 'job'
+  return `${name}-${new Date().toISOString().slice(0, 10)}.clearline`
+}
+
+function downloadClearlinePayload(payload, meta) {
   const blob = new Blob([JSON.stringify(payload)], { type: 'application/octet-stream' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${name}-${new Date().toISOString().slice(0, 10)}.clearline`
+  a.download = clearlineJobFilename(meta)
   a.click()
   URL.revokeObjectURL(url)
+}
+
+function buildJobPayload(meta, survey) {
+  return {
+    format: 'clearline-job',
+    version: 1,
+    exportedAt: nowIso(),
+    meta: {
+      customer: meta.customer || '',
+      site: meta.site || '',
+      ticket: meta.ticket || '',
+    },
+    survey,
+    design: loadJobDesign(meta.id),
+    golive: loadJobGoLive(meta.id),
+  }
 }
 
 export function exportJobFile(jobId) {
   const meta = getJob(jobId)
   if (!meta) throw new Error('Job not found')
   const survey = loadJobSurvey(jobId)
-  const payload = {
-    format: 'clearline-job',
-    version: 1,
-    exportedAt: nowIso(),
-    meta: {
-      customer: meta.customer || '',
-      site: meta.site || '',
-      ticket: meta.ticket || '',
-    },
-    survey,
-    design: loadJobDesign(jobId),
-    golive: loadJobGoLive(jobId),
-  }
-  downloadClearlinePayload(payload, meta)
+  downloadClearlinePayload(buildJobPayload(meta, survey), meta)
 }
 
-export async function exportJobFileAsync(jobId) {
+/** Build a job file blob without triggering a browser download. */
+export async function buildJobFileBlobAsync(jobId) {
   const meta = getJob(jobId)
   if (!meta) throw new Error('Job not found')
   const surveyLean = await loadJobSurveyAsync(jobId)
   const survey = await hydrateSurveyPhotosForExport(jobId, surveyLean)
-  const payload = {
-    format: 'clearline-job',
-    version: 1,
-    exportedAt: nowIso(),
-    meta: {
-      customer: meta.customer || '',
-      site: meta.site || '',
-      ticket: meta.ticket || '',
-    },
-    survey,
-    design: loadJobDesign(jobId),
-    golive: loadJobGoLive(jobId),
-  }
-  downloadClearlinePayload(payload, meta)
+  const payload = buildJobPayload(meta, survey)
+  const blob = new Blob([JSON.stringify(payload)], { type: 'application/octet-stream' })
+  return { blob, filename: clearlineJobFilename(meta) }
+}
+
+export async function exportJobFileAsync(jobId) {
+  const { blob, filename } = await buildJobFileBlobAsync(jobId)
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 export function exportAllJobs() {

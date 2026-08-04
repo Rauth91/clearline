@@ -3,33 +3,34 @@
  * Ctrl/Cmd-K is typically wired by App; also export CommandPaletteTrigger.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { listAccounts } from '../lib/accountModel.js'
-import { listJobs } from '../lib/jobModel.js'
+import { listJobs, jobWorkspacePath } from '../lib/jobModel.js'
 import { searchReference } from '../lib/referenceIndex.js'
 import { setActiveAccountId, setActiveJobId } from '../lib/repo.js'
 import { navigate } from '../lib/router.js'
 
+const CodecRef = lazy(() => import('./CodecRef.jsx'))
+const FirmwareRefs = lazy(() => import('./FirmwareRefs.jsx'))
+
 const ROUTES = [
   { id: 'route-home', label: 'Home', path: '#/', keywords: ['home', 'my day'] },
-  { id: 'route-jobs', label: 'Jobs', path: '/jobs', keywords: ['jobs', 'customers'] },
-  { id: 'route-accounts', label: 'Accounts', path: '/accounts', keywords: ['accounts', 'call flow'] },
+  { id: 'route-accounts', label: 'Accounts', path: '/accounts', keywords: ['accounts', 'jobs', 'customers', 'call flow'] },
   { id: 'route-settings', label: 'Settings', path: '/settings', keywords: ['settings', 'admin'] },
-  { id: 'route-calldiag', label: 'Call Diagnostic', path: '/tools/calldiag', keywords: ['tools', 'sip', 'ladder', 'netsapiens'] },
-  { id: 'route-pcap', label: 'Packet Capture', path: '/tools/pcap', keywords: ['tools', 'pcap', 'wireshark', 'rtp', 'capture'] },
-  { id: 'route-netcheck', label: 'Network Check', path: '/tools/netcheck', keywords: ['tools', 'network', 'visualware', 'jitter', 'mos', 'nat'] },
-  { id: 'route-router', label: 'Router Advisor', path: '/tools/router', keywords: ['tools', 'router', 'firewall', 'sip alg', 'qos', 'meraki', 'cisco'] },
-  { id: 'route-yealink', label: 'Yealink Codes', path: '/tools/yealink', keywords: ['tools', 'yealink', 'codes'] },
-  { id: 'route-symptom', label: 'Symptom Wizard', path: '/tools/symptom', keywords: ['tools', 'troubleshoot', 'wizard'] },
-  { id: 'route-ports', label: 'Port Checklist', path: '/tools/ports', keywords: ['tools', 'firewall', 'ports'] },
-  { id: 'route-algo', label: 'Algo Config', path: '/tools/algo', keywords: ['tools', 'algo', 'paging'] },
+  { id: 'route-callanalysis', label: 'Call Analysis', path: '/tools/callanalysis', keywords: ['tools', 'sip', 'ladder', 'netsapiens', 'pcap', 'wireshark', 'rtp', 'capture', 'diagnostic'] },
+  { id: 'route-readiness', label: 'Readiness', path: '/tools/readiness', keywords: ['tools', 'network', 'visualware', 'jitter', 'mos', 'nat', 'ports', 'firewall', 'router', 'sip alg', 'qos', 'meraki', 'cisco'] },
+  { id: 'route-deviceconfig', label: 'Device Config', path: '/tools/deviceconfig', keywords: ['tools', 'yealink', 'codes', 'algo', 'paging', 'device'] },
   { id: 'route-quickcard', label: 'Quick Card', path: '/tools/quickcard', keywords: ['tools', 'quick card'] },
-  { id: 'route-codec', label: 'Codec & QoS', path: '/tools/codec', keywords: ['tools', 'codec', 'dscp', 'sip'] },
-  { id: 'route-ref', label: 'Tools · Reference hub', path: '/tools/reference', keywords: ['tools', 'search'] },
-  { id: 'route-trouble', label: 'Tools · Troubleshoot hub', path: '/tools/troubleshoot', keywords: ['tools', 'hub'] },
-  { id: 'route-config', label: 'Tools · Config hub', path: '/tools/config', keywords: ['tools', 'hub'] },
+  { id: 'route-codec', label: 'Codec & QoS', path: '/tools/codec', keywords: ['tools', 'codec', 'dscp', 'sip', 'reference'] },
+  { id: 'route-firmware', label: 'Firmware Refs', path: '/tools/firmware', keywords: ['tools', 'firmware', 'yealink', 'polycom', 'reference'] },
 ]
+
+const SOURCE_GROUP = {
+  yealink: 'Yealink',
+  codec: 'Codec',
+  firmware: 'Firmware',
+}
 
 function scoreText(hay, q) {
   const t = String(hay || '').toLowerCase()
@@ -44,85 +45,100 @@ function scoreText(hay, q) {
   return score
 }
 
-function buildItems(query) {
+function codecTabForRecord(record) {
+  const hay = `${record?.title || ''} ${record?.subtitle || ''} ${record?.keywords?.join(' ') || ''}`.toLowerCase()
+  if (hay.includes('sip ') || /^\s*sip\b/.test(hay) || record?.title?.startsWith('SIP ')) return 'SIP Response Codes'
+  if (hay.includes('dscp') || hay.includes('qos')) return 'QoS / DSCP'
+  return 'Codecs'
+}
+
+function buildItems(query, sourceFilter) {
   const q = String(query || '').toLowerCase().trim()
-  /** @type {Array<{ id: string, group: string, label: string, subtitle?: string, path: string, score: number }>} */
+  /** @type {Array<{ id: string, group: string, label: string, subtitle?: string, path?: string, score: number, kind?: string, record?: object }>} */
   const items = []
 
-  try {
-    for (const job of listJobs()) {
-      const label = job.customer || 'Untitled job'
-      const subtitle = job.site || ''
+  if (!sourceFilter) {
+    try {
+      for (const job of listJobs()) {
+        const label = job.customer || 'Untitled job'
+        const subtitle = job.site || ''
+        const score = q
+          ? scoreText(label, q) * 2
+            + scoreText(subtitle, q)
+            + scoreText(job.ticket, q)
+            + scoreText(job.id, q)
+          : 1
+        if (!q || score > 0) {
+          items.push({
+            id: `job-${job.id}`,
+            group: 'Jobs',
+            label,
+            subtitle: subtitle || 'Job',
+            path: jobWorkspacePath(job),
+            score,
+          })
+        }
+      }
+    } catch { /* repo not ready */ }
+
+    try {
+      for (const acct of listAccounts()) {
+        const label = acct.name || 'Untitled account'
+        const subtitle = [acct.site, acct.mainDid].filter(Boolean).join(' · ')
+        const score = q
+          ? scoreText(label, q) * 2 + scoreText(subtitle, q) + scoreText(acct.id, q)
+          : 1
+        if (!q || score > 0) {
+          items.push({
+            id: `acct-${acct.id}`,
+            group: 'Accounts',
+            label,
+            subtitle: subtitle || 'Account',
+            path: `/account/${acct.id}`,
+            score,
+          })
+        }
+      }
+    } catch { /* repo not ready */ }
+
+    for (const route of ROUTES) {
       const score = q
-        ? scoreText(label, q) * 2
-          + scoreText(subtitle, q)
-          + scoreText(job.ticket, q)
-          + scoreText(job.id, q)
+        ? scoreText(route.label, q) * 2
+          + route.keywords.reduce((s, k) => s + scoreText(k, q), 0)
         : 1
       if (!q || score > 0) {
         items.push({
-          id: `job-${job.id}`,
-          group: 'Jobs',
-          label,
-          subtitle: subtitle || 'Job',
-          path: `/job/${job.id}`,
+          id: route.id,
+          group: 'Go to',
+          label: route.label,
+          subtitle: route.path,
+          path: route.path,
           score,
         })
       }
-    }
-  } catch { /* repo not ready */ }
-
-  try {
-    for (const acct of listAccounts()) {
-      const label = acct.name || 'Untitled account'
-      const subtitle = [acct.site, acct.mainDid].filter(Boolean).join(' · ')
-      const score = q
-        ? scoreText(label, q) * 2 + scoreText(subtitle, q) + scoreText(acct.id, q)
-        : 1
-      if (!q || score > 0) {
-        items.push({
-          id: `acct-${acct.id}`,
-          group: 'Accounts',
-          label,
-          subtitle: subtitle || 'Account',
-          path: `/account/${acct.id}`,
-          score,
-        })
-      }
-    }
-  } catch { /* repo not ready */ }
-
-  for (const route of ROUTES) {
-    const score = q
-      ? scoreText(route.label, q) * 2
-        + route.keywords.reduce((s, k) => s + scoreText(k, q), 0)
-      : 1
-    if (!q || score > 0) {
-      items.push({
-        id: route.id,
-        group: 'Go to',
-        label: route.label,
-        subtitle: route.path,
-        path: route.path,
-        score,
-      })
     }
   }
 
-  if (q) {
-    for (const ref of searchReference(q, { limit: 12 })) {
-      const path = ref.source === 'yealink'
-        ? '/tools/reference'
-        : '/tools/reference'
-      items.push({
-        id: `ref-${ref.source}-${ref.title}`,
-        group: ref.source === 'yealink' ? 'Yealink' : 'Codec',
-        label: ref.title,
-        subtitle: ref.subtitle,
-        path: `${path}?q=${encodeURIComponent(q)}`,
-        score: ref.score,
-      })
-    }
+  const refs = (q || sourceFilter)
+    ? searchReference(q, {
+      limit: sourceFilter ? 40 : 12,
+      source: sourceFilter || undefined,
+    })
+    : []
+
+  for (const ref of refs) {
+    items.push({
+      id: `ref-${ref.source}-${ref.title}`,
+      group: SOURCE_GROUP[ref.source] || 'Reference',
+      label: ref.title,
+      subtitle: ref.subtitle,
+      score: ref.score || (q ? 0 : 1),
+      kind: 'ref',
+      record: ref,
+      path: ref.source === 'yealink'
+        ? `/tools/deviceconfig?tab=yealink&q=${encodeURIComponent(q || ref.title)}`
+        : undefined,
+    })
   }
 
   return items
@@ -168,20 +184,30 @@ export function CommandPaletteTrigger({ onClick, className, label = 'Search' }) 
   )
 }
 
-export default function CommandPalette({ open, onClose }) {
+export default function CommandPalette({
+  open,
+  onClose,
+  sourceFilter = null,
+  initialQuery = '',
+}) {
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
+  const [detail, setDetail] = useState(null)
   const dialogRef = useRef(null)
   const inputRef = useRef(null)
   const listRef = useRef(null)
 
-  const items = useMemo(() => (open ? buildItems(query) : []), [open, query])
+  const items = useMemo(
+    () => (open ? buildItems(query, sourceFilter) : []),
+    [open, query, sourceFilter],
+  )
   const groups = useMemo(() => groupItems(items), [items])
 
   useEffect(() => {
     if (!open) return undefined
-    setQuery('')
+    setQuery(initialQuery || '')
     setActiveIndex(0)
+    setDetail(null)
     const t = requestAnimationFrame(() => inputRef.current?.focus())
     const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
@@ -189,26 +215,31 @@ export default function CommandPalette({ open, onClose }) {
       cancelAnimationFrame(t)
       document.body.style.overflow = prevOverflow
     }
-  }, [open])
+  }, [open, initialQuery, sourceFilter])
 
   useEffect(() => {
     setActiveIndex(0)
   }, [query])
 
   useEffect(() => {
-    if (!open) return undefined
+    if (!open || detail) return undefined
     const el = listRef.current?.querySelector(`[data-palette-index="${activeIndex}"]`)
     el?.scrollIntoView({ block: 'nearest' })
-  }, [activeIndex, open, items])
+  }, [activeIndex, open, items, detail])
 
   useEffect(() => {
     if (!open) return undefined
     function onKey(e) {
       if (e.key === 'Escape') {
         e.preventDefault()
+        if (detail) {
+          setDetail(null)
+          return
+        }
         onClose?.()
         return
       }
+      if (detail) return
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setActiveIndex(i => (items.length ? (i + 1) % items.length : 0))
@@ -244,9 +275,13 @@ export default function CommandPalette({ open, onClose }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, items, activeIndex, onClose])
+  }, [open, items, activeIndex, onClose, detail])
 
   function selectItem(item) {
+    if (item?.kind === 'ref' && item.record?.source !== 'yealink') {
+      setDetail(item.record)
+      return
+    }
     if (!item?.path) return
     const [pathPart, queryPart] = item.path.split('?')
     const normalized = pathPart.startsWith('#') ? pathPart.slice(1) : pathPart
@@ -255,12 +290,12 @@ export default function CommandPalette({ open, onClose }) {
       setActiveAccountId(null)
     }
     if (queryPart) {
-      const query = {}
+      const nextQuery = {}
       for (const pair of queryPart.split('&')) {
         const [k, v = ''] = pair.split('=')
-        query[decodeURIComponent(k)] = decodeURIComponent(v)
+        nextQuery[decodeURIComponent(k)] = decodeURIComponent(v)
       }
-      navigate(pathPart, { query })
+      navigate(pathPart, { query: nextQuery })
     } else {
       navigate(pathPart)
     }
@@ -270,6 +305,11 @@ export default function CommandPalette({ open, onClose }) {
   if (!open || typeof document === 'undefined') return null
 
   let flatIndex = 0
+  const filterLabel = sourceFilter === 'codec'
+    ? 'Codec & QoS'
+    : sourceFilter === 'firmware'
+      ? 'Firmware'
+      : null
 
   return createPortal(
     <div
@@ -279,7 +319,7 @@ export default function CommandPalette({ open, onClose }) {
     >
       <div
         ref={dialogRef}
-        className="section-modal cmd-palette"
+        className={`section-modal cmd-palette${detail ? ' has-detail' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="cmd-palette-title"
@@ -288,63 +328,90 @@ export default function CommandPalette({ open, onClose }) {
         <div className="section-modal-head cmd-palette-head">
           <div>
             <div className="survey-kicker">Command</div>
-            <h2 id="cmd-palette-title">Search</h2>
+            <h2 id="cmd-palette-title">{filterLabel || 'Search'}</h2>
           </div>
           <div className="section-modal-nav">
+            {detail && (
+              <button type="button" className="btn btn-secondary" onClick={() => setDetail(null)}>
+                Back
+              </button>
+            )}
             <button type="button" className="btn btn-secondary" onClick={onClose}>
               Close
             </button>
           </div>
         </div>
         <div className="section-modal-body cmd-palette-body">
-          <input
-            ref={inputRef}
-            className="cmd-palette-input"
-            type="search"
-            placeholder="Jobs, accounts, tools, reference…"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            aria-autocomplete="list"
-            aria-controls="cmd-palette-list"
-            autoComplete="off"
-          />
-          <div
-            id="cmd-palette-list"
-            className="cmd-palette-list"
-            role="listbox"
-            ref={listRef}
-          >
-            {items.length === 0 ? (
-              <p className="cmd-palette-empty">No matches.</p>
-            ) : (
-              groups.map(({ group, items: groupItems }) => (
-                <div key={group} className="cmd-palette-group" role="group" aria-label={group}>
-                  <div className="cmd-palette-group-label">{group}</div>
-                  {groupItems.map(item => {
-                    const index = flatIndex++
-                    const active = index === activeIndex
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        role="option"
-                        aria-selected={active}
-                        data-palette-index={index}
-                        className={`cmd-palette-item${active ? ' is-active' : ''}`}
-                        onMouseEnter={() => setActiveIndex(index)}
-                        onClick={() => selectItem(item)}
-                      >
-                        <span className="cmd-palette-item-label">{item.label}</span>
-                        {item.subtitle ? (
-                          <span className="cmd-palette-item-sub">{item.subtitle}</span>
-                        ) : null}
-                      </button>
-                    )
-                  })}
-                </div>
-              ))
-            )}
-          </div>
+          {detail ? (
+            <div className="cmd-palette-detail">
+              <div className="cmd-palette-detail-hit">
+                <strong>{detail.title}</strong>
+                {detail.subtitle ? <span>{detail.subtitle}</span> : null}
+                {detail.body ? <p>{detail.body}</p> : null}
+              </div>
+              <Suspense fallback={<p className="muted">Loading reference…</p>}>
+                {detail.source === 'codec' && (
+                  <CodecRef initialTab={codecTabForRecord(detail)} />
+                )}
+                {detail.source === 'firmware' && (
+                  <FirmwareRefs />
+                )}
+              </Suspense>
+            </div>
+          ) : (
+            <>
+              <input
+                ref={inputRef}
+                className="cmd-palette-input"
+                type="search"
+                placeholder={sourceFilter
+                  ? `Search ${filterLabel}…`
+                  : 'Jobs, accounts, tools, reference…'}
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                aria-autocomplete="list"
+                aria-controls="cmd-palette-list"
+                autoComplete="off"
+              />
+              <div
+                id="cmd-palette-list"
+                className="cmd-palette-list"
+                role="listbox"
+                ref={listRef}
+              >
+                {items.length === 0 ? (
+                  <p className="cmd-palette-empty">No matches.</p>
+                ) : (
+                  groups.map(({ group, items: groupItems }) => (
+                    <div key={group} className="cmd-palette-group" role="group" aria-label={group}>
+                      <div className="cmd-palette-group-label">{group}</div>
+                      {groupItems.map(item => {
+                        const index = flatIndex++
+                        const active = index === activeIndex
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            role="option"
+                            aria-selected={active}
+                            data-palette-index={index}
+                            className={`cmd-palette-item${active ? ' is-active' : ''}`}
+                            onMouseEnter={() => setActiveIndex(index)}
+                            onClick={() => selectItem(item)}
+                          >
+                            <span className="cmd-palette-item-label">{item.label}</span>
+                            {item.subtitle ? (
+                              <span className="cmd-palette-item-sub">{item.subtitle}</span>
+                            ) : null}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>,

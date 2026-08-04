@@ -2,12 +2,13 @@
  * CallDiagnostic — NetSapiens SIP capture → call story, findings, ladder.
  */
 
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { parseCapture } from '../lib/sipLadder.js'
 import {
   AnalysisView,
   CallPicker,
 } from './callAnalysisUi.jsx'
+import Dropzone from './Dropzone.jsx'
 
 export default function CallDiagnostic() {
   const [input, setInput] = useState('')
@@ -15,7 +16,6 @@ export default function CallDiagnostic() {
   const [selectedId, setSelectedId] = useState(null)
   const [err, setErr] = useState(null)
   const [picking, setPicking] = useState(false)
-  const fileRef = useRef(null)
 
   const selected = useMemo(
     () => (calls || []).find(c => c.callId === selectedId) || null,
@@ -46,19 +46,6 @@ export default function CallDiagnostic() {
       setSelectedId(null)
       setPicking(true)
     }
-  }
-
-  function handleFile(e) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = ev => {
-      const t = String(ev.target.result || '')
-      setInput(t)
-      run(t)
-    }
-    reader.readAsText(file)
-    e.target.value = ''
   }
 
   function clear() {
@@ -95,19 +82,22 @@ export default function CallDiagnostic() {
             />
           ) : (
             <>
-              <div className="cd-upload-row">
-                <button type="button" className="btn btn-primary" onClick={() => fileRef.current?.click()}>
-                  Upload CSV
-                </button>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept=".csv,.txt,text/csv,text/plain"
-                  style={{ display: 'none' }}
-                  onChange={handleFile}
-                />
-                <span className="cd-or">or paste the CSV below</span>
-              </div>
+              <Dropzone
+                title="Call history CSV"
+                subtitle="NetSapiens Call History export · or paste below"
+                accept=".csv,.txt,text/csv,text/plain"
+                maxFiles={1}
+                onUpload={async (file, { onProgress }) => {
+                  onProgress(0.2)
+                  const text = await file.text()
+                  onProgress(0.7)
+                  setInput(text)
+                  run(text)
+                  onProgress(1)
+                  return { bytes: text.length }
+                }}
+              />
+              <p className="cd-or">or paste the CSV below</p>
               <textarea
                 className="cd-textarea"
                 value={input}

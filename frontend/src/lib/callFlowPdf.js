@@ -280,6 +280,9 @@ export async function exportCallFlowPdf(account) {
 
   footer()
 
-  const filename = `${slug(account.name)}-call-flow-${new Date().toISOString().slice(0, 10)}.pdf`
-  doc.save(filename)
+  return doc.output('blob')
+}
+
+export function callFlowPdfFilename(account) {
+  return `${slug(account.name)}-call-flow-${new Date().toISOString().slice(0, 10)}.pdf`
 }

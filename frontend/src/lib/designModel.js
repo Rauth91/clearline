@@ -221,10 +221,14 @@ export async function downloadDesignPdf(design, completion) {
       }
     }
 
-    pdf.save(filenameBase(design, 'pdf'))
+    return pdf.output('blob')
   } finally {
     iframe.remove()
   }
+}
+
+export function designExportFilename(design, ext = 'pdf') {
+  return filenameBase(design, ext)
 }
 
 /** Per-section fill ratio for progress chips */

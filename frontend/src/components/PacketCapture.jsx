@@ -2,9 +2,10 @@
  * Packet Capture — Wireshark-style VoIP pcap analyzer (classic libpcap).
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AnalysisView, CallPicker } from './callAnalysisUi.jsx'
 import { PCAP_MAX_BYTES } from '../lib/pcap.js'
+import Dropzone from './Dropzone.jsx'
 
 function formatBytes(n) {
   if (n < 1024) return `${n} B`
@@ -86,14 +87,11 @@ function runInWorker(buffer, onProgress) {
 
 export default function PacketCapture() {
   const [fileMeta, setFileMeta] = useState(null)
-  const [progress, setProgress] = useState(null)
   const [calls, setCalls] = useState(null)
   const [meta, setMeta] = useState(null)
   const [selectedId, setSelectedId] = useState(null)
   const [err, setErr] = useState(null)
   const [picking, setPicking] = useState(false)
-  const [dragOver, setDragOver] = useState(false)
-  const fileRef = useRef(null)
 
   const selected = useMemo(
     () => (calls || []).find(c => c.callId === selectedId) || null,
@@ -104,8 +102,8 @@ export default function PacketCapture() {
     // noop cleanup placeholder
   }, [])
 
-  async function ingestFile(file) {
-    if (!file) return
+  async function ingestFile(file, onProgress) {
+    if (!file) return null
     setErr(null)
     setCalls(null)
     setSelectedId(null)
@@ -114,43 +112,41 @@ export default function PacketCapture() {
     setFileMeta({ name: file.name, size: file.size })
 
     if (file.size > PCAP_MAX_BYTES) {
-      setErr(
-        `File is ${formatBytes(file.size)} — over the 100 MB limit. In Wireshark filter with \`udp && (sip || rtp)\`, then File → Export Specified Packets and retry.`,
-      )
-      setProgress(null)
-      return
+      const message = `File is ${formatBytes(file.size)} — over the 100 MB limit. In Wireshark filter with \`udp && (sip || rtp)\`, then File → Export Specified Packets and retry.`
+      setErr(message)
+      throw new Error(message)
     }
 
-    setProgress(0)
-    try {
-      const buffer = await file.arrayBuffer()
-      const result = await runInWorker(buffer, setProgress)
-      setProgress(null)
-      setMeta({
-        skippedTcpIpv6: result.skippedTcpIpv6 || 0,
-        sipPacketCount: result.sipPacketCount || 0,
-      })
-      if (!result.calls?.length) {
-        setErr('No SIP or RTP VoIP traffic found in this capture.')
-        return
-      }
-      setCalls(result.calls)
-      if (result.calls.length === 1) {
-        setSelectedId(result.calls[0].callId)
-        setPicking(false)
-      } else {
-        setSelectedId(null)
-        setPicking(true)
-      }
-    } catch (e) {
-      setProgress(null)
-      setErr(e?.message || 'Could not parse that capture.')
+    onProgress?.(0.05)
+    const buffer = await file.arrayBuffer()
+    const result = await runInWorker(buffer, (pct) => {
+      // Worker reports 0–100; Dropzone expects 0–1
+      onProgress?.(Math.min(0.99, (Number(pct) || 0) / 100))
+    })
+    onProgress?.(1)
+
+    setMeta({
+      skippedTcpIpv6: result.skippedTcpIpv6 || 0,
+      sipPacketCount: result.sipPacketCount || 0,
+    })
+    if (!result.calls?.length) {
+      const message = 'No SIP or RTP VoIP traffic found in this capture.'
+      setErr(message)
+      throw new Error(message)
     }
+    setCalls(result.calls)
+    if (result.calls.length === 1) {
+      setSelectedId(result.calls[0].callId)
+      setPicking(false)
+    } else {
+      setSelectedId(null)
+      setPicking(true)
+    }
+    return { callCount: result.calls.length, name: file.name }
   }
 
   function clear() {
     setFileMeta(null)
-    setProgress(null)
     setCalls(null)
     setMeta(null)
     setSelectedId(null)
@@ -181,33 +177,14 @@ export default function PacketCapture() {
             />
           ) : (
             <>
-              <div
-                className={`pc-dropzone${dragOver ? ' is-over' : ''}`}
-                onDragEnter={e => { e.preventDefault(); setDragOver(true) }}
-                onDragOver={e => { e.preventDefault(); setDragOver(true) }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={e => {
-                  e.preventDefault()
-                  setDragOver(false)
-                  const f = e.dataTransfer.files?.[0]
-                  if (f) ingestFile(f)
-                }}
-              >
-                <p>Drag &amp; drop a <code>.pcap</code> / <code>.cap</code> here</p>
-                <button type="button" className="btn btn-primary" onClick={() => fileRef.current?.click()}>
-                  Choose file
-                </button>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept=".pcap,.cap,application/vnd.tcpdump.pcap,application/octet-stream"
-                  hidden
-                  onChange={e => {
-                    ingestFile(e.target.files?.[0])
-                    e.target.value = ''
-                  }}
-                />
-              </div>
+              <Dropzone
+                title="Packet capture"
+                subtitle={`Classic .pcap / .cap · max ${formatBytes(PCAP_MAX_BYTES)}`}
+                accept=".pcap,.pcapng,.cap,application/vnd.tcpdump.pcap,application/octet-stream"
+                maxFiles={1}
+                maxBytes={PCAP_MAX_BYTES}
+                onUpload={async (file, { onProgress }) => ingestFile(file, onProgress)}
+              />
 
               {fileMeta && (
                 <p className="pc-file-meta" aria-live="polite">
@@ -215,13 +192,6 @@ export default function PacketCapture() {
                   {' · '}
                   {formatBytes(fileMeta.size)}
                 </p>
-              )}
-
-              {progress != null && (
-                <div className="pc-progress" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
-                  <div className="pc-progress-bar" style={{ width: `${progress}%` }} />
-                  <span>Parsing… {progress}%</span>
-                </div>
               )}
 
               {err && <div className="cd-error-msg">{err}</div>}

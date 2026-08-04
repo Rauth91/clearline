@@ -1,9 +1,27 @@
 /**
  * Tiny hash router — no dependencies.
- * Paths: #/jobs, #/job/:id/survey, #/tools/reference?q=…, etc.
+ * Paths: #/accounts, #/job/:id/survey, #/tools/callanalysis, etc.
+ *
+ * Legacy tool bookmarks are recognized here and rewritten by App via
+ * resolveLegacyRedirect — never 404:
+ *   calldiag, pcap → callanalysis
+ *   netcheck, ports, router → readiness?tab=…
+ *   yealink, algo → deviceconfig?tab=…
+ *   codec, firmware → ref-palette (command palette)
+ *   #/job/:id/runbook → #/job/:id/golive?tab=runbook
  */
 
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
+
+const LEGACY_TOOL_REDIRECTS = {
+  calldiag: { path: '/tools/callanalysis' },
+  pcap: { path: '/tools/callanalysis' },
+  netcheck: { path: '/tools/readiness', tab: 'network' },
+  ports: { path: '/tools/readiness', tab: 'ports' },
+  router: { path: '/tools/readiness', tab: 'router' },
+  yealink: { path: '/tools/deviceconfig', tab: 'yealink' },
+  algo: { path: '/tools/deviceconfig', tab: 'algo' },
+}
 
 function parseHash(hash) {
   const raw = (hash || '').replace(/^#/, '') || '/'
@@ -27,16 +45,14 @@ function parseHash(hash) {
   if (segments.length === 0) {
     name = 'home'
   } else if (segments[0] === 'jobs') {
-    name = 'jobs'
+    // Legacy bookmark — Accounts is the job list now.
+    name = 'accounts'
   } else if (segments[0] === 'settings') {
     name = 'settings'
   } else if (segments[0] === 'accounts') {
     name = 'accounts'
   } else if (segments[0] === 'account' && segments[1]) {
     name = 'account'
-    params.accountId = segments[1]
-  } else if (segments[0] === 'portal' && segments[1]) {
-    name = 'portal'
     params.accountId = segments[1]
   } else if (segments[0] === 'job' && segments[1]) {
     params.jobId = segments[1]
@@ -45,29 +61,61 @@ function parseHash(hash) {
     else if (section === 'survey') name = 'survey'
     else if (section === 'design') name = 'design'
     else if (section === 'golive') name = 'golive'
-    else if (section === 'runbook') name = 'runbook'
+    else if (section === 'runbook') name = 'golive' // legacy — App rewrites to ?tab=runbook
     else if (section === 'migration') name = 'migration'
     else name = 'cockpit'
   } else if (segments[0] === 'tools') {
-    const tool = segments[1] || 'calldiag'
-    const groups = new Set(['reference', 'troubleshoot', 'config'])
-    const singles = new Set([
-      'calldiag', 'pcap', 'netcheck', 'router', 'yealink', 'symptom', 'ports', 'algo', 'quickcard', 'codec', 'carriers', 'meta2ns',
-    ])
-    if (groups.has(tool)) {
-      name = `tools-${tool}`
-      params.toolGroup = tool
-      if (segments[2]) params.toolTab = segments[2]
-    } else if (singles.has(tool)) {
-      name = 'tool'
-      params.toolId = tool
+    const tool = segments[1] || 'callanalysis'
+    // Codec / firmware open the command palette (reference), not a tool page.
+    if (tool === 'codec' || tool === 'firmware') {
+      name = 'ref-palette'
+      params.refSource = tool
     } else {
+      const canonical = new Set([
+        'callanalysis',
+        'readiness',
+        'deviceconfig',
+        'quickcard',
+      ])
       name = 'tool'
-      params.toolId = 'calldiag'
+      if (LEGACY_TOOL_REDIRECTS[tool]) {
+        // Parse to the destination tool id so the page can render while URL rewrites.
+        const dest = LEGACY_TOOL_REDIRECTS[tool].path.split('/').pop()
+        params.toolId = dest
+      } else {
+        params.toolId = canonical.has(tool) ? tool : 'callanalysis'
+      }
     }
   }
 
   return { path, name, params, query, segments }
+}
+
+/**
+ * If this route is a retired bookmark, return { path, query } for navigate(…, { replace: true }).
+ * codec/firmware stay as ref-palette (no path rewrite).
+ */
+export function resolveLegacyRedirect(route) {
+  const segments = route?.segments || []
+  const query = { ...(route?.query || {}) }
+
+  if (segments[0] === 'tools') {
+    const legacy = LEGACY_TOOL_REDIRECTS[segments[1]]
+    if (legacy) {
+      const nextQuery = { ...query }
+      if (legacy.tab) nextQuery.tab = legacy.tab
+      return { path: legacy.path, query: nextQuery }
+    }
+  }
+
+  if (segments[0] === 'job' && segments[2] === 'runbook' && segments[1]) {
+    return {
+      path: `/job/${segments[1]}/golive`,
+      query: { ...query, tab: 'runbook' },
+    }
+  }
+
+  return null
 }
 
 function getSnapshot() {
@@ -98,7 +146,7 @@ export function getRoute() {
 }
 
 /**
- * @param {string} path e.g. "/jobs" or "/job/abc/survey"
+ * @param {string} path e.g. "/accounts" or "/job/abc/survey"
  * @param {{ replace?: boolean, query?: Record<string, string> }} [opts]
  */
 export function navigate(path, opts = {}) {

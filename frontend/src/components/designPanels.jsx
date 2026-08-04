@@ -2,8 +2,10 @@
  * Memoized System Design panel bodies — each receives only its state slice + stable handlers.
  */
 
-import { memo } from 'react'
+import { memo, useRef } from 'react'
 import QuickCard from './QuickCard.jsx'
+import { useCrumpleDelete } from './CrumpleDelete.jsx'
+import TipChips, { insertTipHeading } from './TipChips.jsx'
 
 const YES_NO_FIELDS = new Set(['enabled', 'needed', 'perUser'])
 
@@ -53,8 +55,11 @@ export const DesignMainNumbersPanel = memo(function DesignMainNumbersPanel({
   onRemove,
   onImportFromSurvey,
 }) {
+  const rows = useRef(new Map())
+  const { crumple, bin } = useCrumpleDelete()
   return (
     <div>
+      {bin}
       <div className="design-list-head">
         <div>
           <h3>Main numbers</h3>
@@ -73,11 +78,18 @@ export const DesignMainNumbersPanel = memo(function DesignMainNumbersPanel({
           </div>
         )}
         {(mainNumbers || []).map(entry => (
-          <div className="design-table-row" key={entry.id}>
+          <div
+            className="design-table-row"
+            key={entry.id}
+            ref={el => {
+              if (el) rows.current.set(entry.id, el)
+              else rows.current.delete(entry.id)
+            }}
+          >
             <input value={entry.label} onChange={e => onUpdate(entry.id, 'label', e.target.value)} placeholder="Main line" />
             <input value={entry.number} onChange={e => onUpdate(entry.id, 'number', e.target.value)} placeholder="337-555-0100" />
             <input value={entry.notes} onChange={e => onUpdate(entry.id, 'notes', e.target.value)} placeholder="Rings to AA" />
-            <button type="button" onClick={() => onRemove(entry.id)}>Remove</button>
+            <button type="button" onClick={() => crumple(rows.current.get(entry.id), () => onRemove(entry.id))}>Remove</button>
           </div>
         ))}
       </div>
@@ -92,8 +104,11 @@ export const DesignUsersPanel = memo(function DesignUsersPanel({
   onRemove,
   onImportFromSurvey,
 }) {
+  const rows = useRef(new Map())
+  const { crumple, bin } = useCrumpleDelete()
   return (
     <div>
+      {bin}
       <div className="design-list-head">
         <div>
           <h3>Users, extensions, and DIDs</h3>
@@ -120,7 +135,14 @@ export const DesignUsersPanel = memo(function DesignUsersPanel({
           </div>
         )}
         {(users || []).map(user => (
-          <div className="design-table-row" key={user.id}>
+          <div
+            className="design-table-row"
+            key={user.id}
+            ref={el => {
+              if (el) rows.current.set(user.id, el)
+              else rows.current.delete(user.id)
+            }}
+          >
             <input value={user.name} onChange={e => onUpdate(user.id, 'name', e.target.value)} placeholder="Jane Tech" />
             <input value={user.username} onChange={e => onUpdate(user.id, 'username', e.target.value)} placeholder="jane.tech" />
             <input type="email" value={user.email || ''} onChange={e => onUpdate(user.id, 'email', e.target.value)} placeholder="jane@company.com" />
@@ -132,7 +154,7 @@ export const DesignUsersPanel = memo(function DesignUsersPanel({
               <option>Yes</option>
               <option>No</option>
             </select>
-            <button type="button" onClick={() => onRemove(user.id)}>Remove</button>
+            <button type="button" onClick={() => crumple(rows.current.get(user.id), () => onRemove(user.id))}>Remove</button>
           </div>
         ))}
       </div>
@@ -141,13 +163,25 @@ export const DesignUsersPanel = memo(function DesignUsersPanel({
 })
 
 export const DesignAssumptionsPanel = memo(function DesignAssumptionsPanel({ assumptions, onChange }) {
+  const tips = [
+    'Assumptions',
+    'Carrier dependencies',
+    'Number port timing',
+    'Holiday overrides',
+    'Customer decisions',
+  ]
   return (
     <label className="survey-field full">
       Notes and assumptions
+      <TipChips
+        tips={tips}
+        value={assumptions}
+        onInsert={(tip) => onChange(insertTipHeading(assumptions, tip))}
+      />
       <textarea
         value={assumptions}
         onChange={e => onChange(e.target.value)}
-        placeholder="Document assumptions, carrier dependencies, number port timing, holiday overrides, customer decisions..."
+        placeholder="e.g. Port FOC is firm for Friday"
         rows={10}
       />
     </label>

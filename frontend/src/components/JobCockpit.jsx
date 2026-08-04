@@ -85,8 +85,8 @@ export default function JobCockpit({ jobId, refreshKey }) {
     return (
       <section className="job-cockpit">
         <p className="empty-hint-action">Job not found.</p>
-        <button type="button" className="btn btn-secondary" onClick={() => navigate('/jobs')}>
-          All jobs
+        <button type="button" className="btn btn-secondary" onClick={() => navigate('/accounts')}>
+          All accounts
         </button>
       </section>
     )
@@ -131,10 +131,14 @@ export default function JobCockpit({ jobId, refreshKey }) {
           </p>
         </div>
         <div className="survey-actions">
-          <button type="button" className="btn btn-secondary" onClick={() => navigate('/jobs')}>
-            All jobs
+          <button type="button" className="btn btn-secondary" onClick={() => navigate('/accounts')}>
+            All accounts
           </button>
-          <button type="button" className="btn btn-secondary" onClick={() => go(`/job/${jobId}/runbook`)}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => navigate(`/job/${jobId}/golive`, { query: { tab: 'runbook' } })}
+          >
             Runbook
           </button>
         </div>

@@ -8,6 +8,8 @@ import {
   putJobPhotos,
   stripPhotoDataUrls,
 } from '../lib/photoStore.js'
+import Dropzone from './Dropzone.jsx'
+import { useCrumpleDelete } from './CrumpleDelete.jsx'
 
 const MAX_EDGE = 1280
 const MAX_PHOTOS = 12
@@ -20,6 +22,9 @@ const PHOTO_CATEGORIES = ['MDF', 'IDF', 'Rack', 'WAN handoff', 'Firewall', 'Swit
 export default function SurveyPhotos({ jobId, photos, onChange }) {
   const [objectUrls, setObjectUrls] = useState({})
   const urlsRef = useRef({})
+  const cardRefs = useRef(new Map())
+  const { crumple, bin } = useCrumpleDelete()
+  const pressureChecked = useRef(false)
 
   const photoIdsKey = (photos || []).map(p => p.id).join('|')
 
@@ -72,39 +77,6 @@ export default function SurveyPhotos({ jobId, photos, onChange }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, photoIdsKey])
 
-  async function handleFiles(files) {
-    const pressure = checkStoragePressure()
-    if (pressure) {
-      emitSaveStatus({
-        type: 'warn',
-        message: `${pressure.message} Adding more photos may fail to save.`,
-      })
-    }
-
-    const nextMeta = [...(photos || [])]
-    const existing = jobId ? await getJobPhotos(jobId) : []
-    const byId = new Map(existing.map(p => [p.id, p]))
-
-    for (const file of Array.from(files || [])) {
-      if (!file.type.startsWith('image/') || nextMeta.length >= MAX_PHOTOS) continue
-      const blob = await resizeImageToBlob(file)
-      const id = makeId()
-      const meta = photoMetaOnly({
-        id,
-        name: file.name,
-        caption: '',
-        category: 'Other',
-      })
-      byId.set(id, { ...meta, blob })
-      nextMeta.push(meta)
-    }
-
-    if (jobId) {
-      await putJobPhotos(jobId, [...byId.values()])
-    }
-    onChange(stripPhotoDataUrls(nextMeta))
-  }
-
   function updatePhoto(id, patch) {
     onChange((photos || []).map(p => (p.id === id ? { ...p, ...patch } : p)))
   }
@@ -128,20 +100,52 @@ export default function SurveyPhotos({ jobId, photos, onChange }) {
 
   return (
     <div className="survey-photo-wrap">
-      <label className="photo-drop">
-        <input
-          type="file"
-          accept="image/*"
-          multiple
-          onChange={e => handleFiles(e.target.files)}
-        />
-        <span>Upload site photos</span>
-        <small>Recommended: MDF, rack, WAN handoff, firewall, switch, AP, phone desk. Max {MAX_PHOTOS}.</small>
-      </label>
+      {bin}
+      <Dropzone
+        key={photoIdsKey}
+        title="Site photos"
+        subtitle={`Up to ${MAX_PHOTOS} photos · MDF, IDF, rack, handoff`}
+        accept="image/*"
+        maxFiles={Math.max(0, MAX_PHOTOS - (photos?.length || 0))}
+        onUpload={async (file, { onProgress }) => {
+          if (!pressureChecked.current) {
+            pressureChecked.current = true
+            const pressure = checkStoragePressure()
+            if (pressure) {
+              emitSaveStatus({
+                type: 'warn',
+                message: `${pressure.message} Adding more photos may fail to save.`,
+              })
+            }
+          }
+          onProgress(0.15)
+          const blob = await resizeImageToBlob(file)
+          onProgress(0.7)
+          const id = makeId()
+          const meta = photoMetaOnly({ id, name: file.name, caption: '', category: 'Other' })
+          if (jobId) {
+            const existing = await getJobPhotos(jobId)
+            await putJobPhotos(jobId, [...existing.filter(p => p.id !== id), { ...meta, blob }])
+          }
+          onProgress(1)
+          return meta
+        }}
+        onComplete={rows => {
+          const added = rows.filter(r => r.status === 'done').map(r => r.value)
+          if (added.length) onChange(stripPhotoDataUrls([...(photos || []), ...added]))
+        }}
+      />
 
       <div className="photo-grid">
         {(photos || []).map(photo => (
-          <figure key={photo.id} className="photo-card">
+          <figure
+            key={photo.id}
+            className="photo-card"
+            ref={el => {
+              if (el) cardRefs.current.set(photo.id, el)
+              else cardRefs.current.delete(photo.id)
+            }}
+          >
             {objectUrls[photo.id] ? (
               <img src={objectUrls[photo.id]} alt={photo.caption || photo.name} />
             ) : (
@@ -158,7 +162,10 @@ export default function SurveyPhotos({ jobId, photos, onChange }) {
               onChange={e => updatePhoto(photo.id, { caption: e.target.value })}
               placeholder="Caption"
             />
-            <button type="button" onClick={() => removePhoto(photo.id)}>
+            <button
+              type="button"
+              onClick={() => crumple(cardRefs.current.get(photo.id), () => removePhoto(photo.id))}
+            >
               Remove
             </button>
           </figure>

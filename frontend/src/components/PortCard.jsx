@@ -2,15 +2,18 @@
  * PortCard — compact number port / FOC fields + collapsible firewall checklist
  */
 
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { emptyPort } from '../lib/jobModel.js'
 import { PORT_PLATFORM_CHECKLISTS } from './PortChecklist.jsx'
+import { useCrumpleDelete } from './CrumpleDelete.jsx'
 
 export default function PortCard({ port: portProp, survey, onSave }) {
   const port = emptyPort(portProp || {})
   const [openChecklist, setOpenChecklist] = useState(false)
   const [platformId, setPlatformId] = useState(PORT_PLATFORM_CHECKLISTS[0]?.id || 'netsapiens')
   const [didDraft, setDidDraft] = useState('')
+  const didRefs = useRef(new Map())
+  const { crumple, bin } = useCrumpleDelete()
 
   const platform = useMemo(
     () => PORT_PLATFORM_CHECKLISTS.find(p => p.id === platformId) || PORT_PLATFORM_CHECKLISTS[0],
@@ -52,6 +55,7 @@ export default function PortCard({ port: portProp, survey, onSave }) {
 
   return (
     <div className="port-card cockpit-panel">
+      {bin}
       <div className="port-card-head">
         <div>
           <div className="survey-kicker">Port</div>
@@ -130,7 +134,11 @@ export default function PortCard({ port: portProp, survey, onSave }) {
                 key={num}
                 type="button"
                 className="port-did-chip"
-                onClick={() => removeDid(num)}
+                ref={el => {
+                  if (el) didRefs.current.set(num, el)
+                  else didRefs.current.delete(num)
+                }}
+                onClick={() => crumple(didRefs.current.get(num), () => removeDid(num))}
                 title="Remove"
                 aria-label={`Remove ${num}`}
               >

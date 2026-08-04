@@ -428,7 +428,7 @@ no ip firewall alg sip
     dhcpOptionNote: 'If phones are isolated on a VLAN, add DHCP provisioning options (66/160/vendor).',
     caveats: [
       'Identify the exact appliance firmware before changing ALG/QoS.',
-      'When unsure, capture SIP+RTP (Packet Capture tool) before and after changes.',
+      'When unsure, capture SIP+RTP (Call Analysis tool) before and after changes.',
     ],
   },
 ]

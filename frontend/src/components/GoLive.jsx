@@ -9,6 +9,7 @@ import {
   exportHandoffDoc,
   exportHandoffPdf,
   goLiveCompletionPercent,
+  goLiveExportFilename,
   mergeGoLive,
   sectionProgressGoLive,
 } from '../lib/goLiveModel.js'
@@ -22,8 +23,12 @@ import {
   saveJobGoLive,
   savePort,
 } from '../lib/jobModel.js'
+import { navigate, useRoute } from '../lib/router.js'
 import { registerWorkspaceFlush } from '../lib/reloadGate.js'
 import { ConflictBanner } from './ConflictReview.jsx'
+import DownloadButton from './DownloadButton.jsx'
+import NavChipStrip from './NavChipStrip.jsx'
+import Runbook from './Runbook.jsx'
 
 const PANELS = [
   ['port', 'Port', 'LSR submission, FOC date, porting window, day-of contact, and rollback'],
@@ -33,11 +38,12 @@ const PANELS = [
   ['handoff', 'Handoff', 'Training, admin contacts, escalation, and sign-off'],
 ]
 
-export default function GoLive({ jobId }) {
+export default function GoLive({ jobId, doneBy = '' }) {
+  const route = useRoute()
+  const tab = route.query.tab === 'runbook' ? 'runbook' : 'workspace'
   const [golive, setGolive] = useState(() => mergeGoLive(loadJobGoLive(jobId)))
   const [port, setPort] = useState(() => getPort(jobId))
   const [activePanel, setActivePanel] = useState(null)
-  const [exportingPdf, setExportingPdf] = useState(false)
   const [exportingHandoff, setExportingHandoff] = useState(false)
   const [showE911Test, setShowE911Test] = useState(false)
   const [e911Form, setE911Form] = useState({ testedBy: '', method: 'test-call' })
@@ -244,16 +250,11 @@ export default function GoLive({ jobId }) {
     setActivePanel(null)
   }
 
-  async function exportPdf() {
-    setExportingPdf(true)
-    try {
-      await downloadGoLivePdf(golive, job || {}, provision)
-    } catch (err) {
-      console.error(err)
-      alert('Could not create the PDF. Try Export HTML as a backup.')
-    } finally {
-      setExportingPdf(false)
-    }
+  async function exportPdfRun({ onProgress }) {
+    onProgress(0.2)
+    const blob = await downloadGoLivePdf(golive, job || {}, provision)
+    onProgress(1)
+    return blob
   }
 
   async function handleHandoffPdf() {
@@ -268,8 +269,38 @@ export default function GoLive({ jobId }) {
     }
   }
 
+  function setGoLiveTab(next) {
+    if (next === 'runbook') {
+      navigate(`/job/${jobId}/golive`, { query: { tab: 'runbook' } })
+    } else {
+      navigate(`/job/${jobId}/golive`)
+    }
+  }
+
   return (
     <section className="go-live">
+      <NavChipStrip
+        label="Go-Live"
+        items={[
+          {
+            id: 'workspace',
+            label: 'Cutover',
+            active: tab === 'workspace',
+            onClick: () => setGoLiveTab('workspace'),
+          },
+          {
+            id: 'runbook',
+            label: 'Runbook',
+            active: tab === 'runbook',
+            onClick: () => setGoLiveTab('runbook'),
+          },
+        ]}
+      />
+
+      {tab === 'runbook' ? (
+        <Runbook jobId={jobId} doneBy={doneBy} />
+      ) : (
+      <>
       <ConflictBanner jobId={jobId} />
       {focToday && (
         <div className="foc-today-banner" role="alert">
@@ -333,7 +364,12 @@ export default function GoLive({ jobId }) {
         <details className="export-menu">
           <summary className="btn btn-secondary">More</summary>
           <div className="export-menu-panel">
-            <button type="button" onClick={exportPdf} disabled={exportingPdf}>{exportingPdf ? 'Creating…' : 'Export Go-Live PDF'}</button>
+            <DownloadButton
+              label="Export Go-Live PDF"
+              filename={goLiveExportFilename(golive, job || {}, 'pdf')}
+              run={exportPdfRun}
+              onError={() => alert('Could not create the PDF. Try Export HTML as a backup.')}
+            />
             <button type="button" onClick={() => exportGoLiveDoc(golive, job || {}, provision)}>Export Go-Live Word</button>
             <button type="button" onClick={() => exportGoLiveHtml(golive, job || {}, provision)}>Export Go-Live HTML</button>
             <button type="button" onClick={() => exportHandoffDoc(golive, job || {}, provision, job?.supportEmail || '')}>Customer Handoff HTML</button>
@@ -586,6 +622,8 @@ export default function GoLive({ jobId }) {
           </div>
         </div>,
         document.body,
+      )}
+      </>
       )}
     </section>
   )

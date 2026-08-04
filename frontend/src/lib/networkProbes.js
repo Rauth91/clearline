@@ -137,15 +137,15 @@ export function buildVerdictActions(verdict, manual = {}) {
       actions.push({
         reason: r,
         action: 'Open Router Advisor and disable SIP ALG on the customer firewall.',
-        href: '/tools/router?focus=sip-alg',
+        href: '/tools/readiness?tab=router&focus=sip-alg',
       })
       continue
     }
     if (/packet loss/i.test(lower) || /loss .+exceeds/i.test(lower)) {
       actions.push({
         reason: r,
-        action: 'Capture at the switch to find where loss enters — use Packet Capture.',
-        href: '/tools/pcap',
+        action: 'Capture at the switch to find where loss enters — use Call Analysis.',
+        href: '/tools/callanalysis',
       })
       continue
     }
@@ -153,7 +153,7 @@ export function buildVerdictActions(verdict, manual = {}) {
       actions.push({
         reason: r,
         action: 'Open Router Advisor and apply QoS (EF for RTP, CS3 for SIP).',
-        href: '/tools/router?focus=qos',
+        href: '/tools/readiness?tab=router&focus=qos',
       })
       continue
     }

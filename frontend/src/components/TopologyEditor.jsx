@@ -14,6 +14,7 @@ import {
 } from '../lib/surveyModel.js'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useCrumpleDelete } from './CrumpleDelete.jsx'
 
 const NODE_TYPES = ['Firewall', 'Router', 'Switch', 'AP', 'Phone', 'PC', 'Server', 'Other']
 const NODE_HALF_W = TOPO_NODE_HALF_W
@@ -30,6 +31,8 @@ export default function TopologyEditor({ topology, onChange }) {
   const nodes = topology.nodes || []
   const links = topology.links || []
   const scrollRef = useRef(null)
+  const linkRows = useRef(new Map())
+  const { crumple, bin } = useCrumpleDelete()
   const [zoom, setZoom] = useState(1)
   const [selectedId, setSelectedId] = useState(null)
   const [selectedPort, setSelectedPort] = useState(null)
@@ -159,6 +162,7 @@ export default function TopologyEditor({ topology, onChange }) {
 
   return (
     <div className="topology-editor">
+      {bin}
       <div className="topology-toolbar">
         <div className="topo-add-group">
           {NODE_TYPES.map(type => (
@@ -256,6 +260,7 @@ export default function TopologyEditor({ topology, onChange }) {
           onRemoveLink={removeLink}
           onCreateLink={addLink}
           onRemoveNode={() => removeNode(selected.id)}
+          crumple={crumple}
           onClose={() => {
             setSelectedId(null)
             setSelectedPort(null)
@@ -289,7 +294,14 @@ export default function TopologyEditor({ topology, onChange }) {
         <div>
           <div className="mini-section-title">Add cable</div>
           <LinkCreator nodes={nodes} onCreate={addLink} />
-          <ConnectionsTable links={links} nodeMap={nodeMap} onUpdateLink={updateLink} onRemoveLink={removeLink} />
+          <ConnectionsTable
+            links={links}
+            nodeMap={nodeMap}
+            onUpdateLink={updateLink}
+            onRemoveLink={removeLink}
+            crumple={crumple}
+            linkRows={linkRows}
+          />
         </div>
       </div>
     </div>
@@ -315,12 +327,14 @@ function DeviceInspector({
   onRemoveLink,
   onCreateLink,
   onRemoveNode,
+  crumple,
   onClose,
 }) {
   const count = Number(node.portCount || defaultPortCount(node.type))
   const presets = portPresets(node.type)
   const portLinks = links.filter(l => l.from === node.id || l.to === node.id)
   const selectedLink = selectedPort ? portLinks.find(l => portForNode(l, node.id) === selectedPort) : null
+  const inspectorRef = useRef(null)
 
   function setPortCount(value) {
     const next = Number(value)
@@ -347,14 +361,26 @@ function DeviceInspector({
 
   return createPortal(
     <div className="device-modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <div className="device-inspector" role="dialog" aria-modal="true" aria-label={`${node.label || node.type} details`} onMouseDown={e => e.stopPropagation()}>
+      <div
+        ref={inspectorRef}
+        className="device-inspector"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${node.label || node.type} details`}
+        onMouseDown={e => e.stopPropagation()}
+      >
         <div className="device-detail-head">
           <div>
             <div className="mini-section-title">Device faceplate</div>
             <strong>{node.label || node.type}</strong>
           </div>
           <div className="device-modal-actions">
-            <button type="button" onClick={onRemoveNode}>Remove device</button>
+            <button
+              type="button"
+              onClick={() => crumple?.(inspectorRef.current, () => onRemoveNode())}
+            >
+              Remove device
+            </button>
             <button type="button" className="btn btn-primary" onClick={onClose}>Done</button>
           </div>
         </div>
@@ -530,7 +556,7 @@ function DeviceFields({ node, onUpdateNode }) {
   )
 }
 
-function ConnectionsTable({ links, nodeMap, onUpdateLink, onRemoveLink }) {
+function ConnectionsTable({ links, nodeMap, onUpdateLink, onRemoveLink, crumple, linkRows }) {
   if (!links.length) return <p className="empty-hint">No cables yet. Add a cable or connect ports from a device faceplate.</p>
   return (
     <div className="connections-table">
@@ -541,14 +567,27 @@ function ConnectionsTable({ links, nodeMap, onUpdateLink, onRemoveLink }) {
         const from = nodeMap[link.from]
         const to = nodeMap[link.to]
         return (
-          <div className="connection-row" key={link.id}>
+          <div
+            className="connection-row"
+            key={link.id}
+            ref={el => {
+              if (!linkRows) return
+              if (el) linkRows.current.set(link.id, el)
+              else linkRows.current.delete(link.id)
+            }}
+          >
             <strong>{from?.label || 'Device'}</strong>
             <input value={link.fromPort || ''} onChange={e => onUpdateLink(link.id, { fromPort: e.target.value })} />
             <strong>{to?.label || 'Device'}</strong>
             <input value={link.toPort || ''} onChange={e => onUpdateLink(link.id, { toPort: e.target.value })} />
             <input value={link.media || ''} onChange={e => onUpdateLink(link.id, { media: e.target.value })} />
             <input value={link.notes || ''} onChange={e => onUpdateLink(link.id, { notes: e.target.value })} placeholder="Notes" />
-            <button type="button" onClick={() => onRemoveLink(link.id)}>Remove</button>
+            <button
+              type="button"
+              onClick={() => crumple?.(linkRows?.current.get(link.id), () => onRemoveLink(link.id))}
+            >
+              Remove
+            </button>
           </div>
         )
       })}

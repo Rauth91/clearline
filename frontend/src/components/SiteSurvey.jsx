@@ -9,19 +9,19 @@ import {
   parseVisualwareReport,
 } from '../lib/networkReadiness.js'
 import {
+  buildHtmlReport,
   createEmptySurvey,
-  downloadJson,
   downloadPdfReport,
   emptySurveyUser,
-  exportEditableDoc,
-  exportHtmlReport,
   makeId,
+  surveyExportFilename,
 } from '../lib/surveyModel.js'
 import { loadJobSurveyAsync, saveJobSurvey } from '../lib/jobModel.js'
 import { hydrateSurveyPhotosForExport } from '../lib/photoStore.js'
 import { canApplyRemoteRefresh, onDataChanged } from '../lib/dataEvents.js'
 import { registerWorkspaceFlush } from '../lib/reloadGate.js'
 import { ConflictBanner } from './ConflictReview.jsx'
+import DownloadButton from './DownloadButton.jsx'
 import {
   SurveyE911Panel,
   SurveyNetworkPanel,
@@ -60,7 +60,6 @@ export default function SiteSurvey({ jobId }) {
   const [survey, setSurvey] = useState(() => createEmptySurvey())
   const [ready, setReady] = useState(false)
   const [parseNote, setParseNote] = useState(null)
-  const [exportingPdf, setExportingPdf] = useState(false)
   const [activePanel, setActivePanel] = useState(null)
   const [speedRun, setSpeedRun] = useState(0)
   const [mcRun, setMcRun] = useState(0)
@@ -296,37 +295,48 @@ export default function SiteSurvey({ jobId }) {
     }
   }
 
-  async function exportPdf() {
-    if (exportingPdf) return
+  async function exportPdfRun({ onProgress }) {
     if (!survey.techName?.trim()) {
       const ok = confirm('No tech name entered yet. Export the PDF without a field tech name?')
-      if (!ok) return
+      if (!ok) {
+        const err = new Error('Export cancelled')
+        err.name = 'AbortError'
+        throw err
+      }
     }
-    setExportingPdf(true)
-    try {
-      const hydrated = await hydrateSurveyPhotosForExport(jobId, latestSurvey.current)
-      await downloadPdfReport(hydrated, analyzeReadiness(hydrated))
-    } catch (err) {
-      console.error(err)
-      alert('Could not create the PDF. Try Export HTML as a backup.')
-    } finally {
-      setExportingPdf(false)
-    }
+    onProgress(0.15)
+    const hydrated = await hydrateSurveyPhotosForExport(jobId, latestSurvey.current)
+    onProgress(0.35)
+    const blob = await downloadPdfReport(hydrated, analyzeReadiness(hydrated))
+    onProgress(1)
+    return blob
   }
 
-  async function exportWord() {
+  async function exportWordRun({ onProgress }) {
+    onProgress(0.2)
     const hydrated = await hydrateSurveyPhotosForExport(jobId, latestSurvey.current)
-    exportEditableDoc(hydrated, analyzeReadiness(hydrated))
+    onProgress(0.6)
+    const html = buildHtmlReport(hydrated, analyzeReadiness(hydrated))
+    onProgress(1)
+    return new Blob(['\ufeff', html], { type: 'application/msword;charset=utf-8' })
   }
 
-  async function exportHtml() {
+  async function exportHtmlRun({ onProgress }) {
+    onProgress(0.2)
     const hydrated = await hydrateSurveyPhotosForExport(jobId, latestSurvey.current)
-    exportHtmlReport(hydrated, analyzeReadiness(hydrated))
+    onProgress(0.6)
+    const html = buildHtmlReport(hydrated, analyzeReadiness(hydrated))
+    onProgress(1)
+    return new Blob([html], { type: 'text/html;charset=utf-8' })
   }
 
-  async function exportDraftJson() {
+  async function exportDraftJsonRun({ onProgress }) {
+    onProgress(0.2)
     const hydrated = await hydrateSurveyPhotosForExport(jobId, latestSurvey.current)
-    downloadJson(hydrated)
+    onProgress(0.7)
+    const blob = new Blob([JSON.stringify(hydrated, null, 2)], { type: 'application/json' })
+    onProgress(1)
+    return blob
   }
 
   function movePanel(delta) {
@@ -432,16 +442,34 @@ export default function SiteSurvey({ jobId }) {
         </div>
         <div className="survey-actions">
           <button type="button" className="btn btn-secondary" onClick={startNew}>New survey</button>
-          <button type="button" className="btn btn-secondary" onClick={exportDraftJson} title="Save the full working survey">Save draft</button>
-          <button type="button" className="btn btn-primary" onClick={exportPdf} disabled={exportingPdf} title="Download a PDF report">
-            {exportingPdf ? 'Creating PDF…' : 'Export PDF'}
-          </button>
+          <DownloadButton
+            className="btn-secondary"
+            label="Save draft"
+            filename={surveyExportFilename(survey, 'json')}
+            run={exportDraftJsonRun}
+            onError={() => alert('Could not save draft JSON.')}
+          />
+          <DownloadButton
+            className="btn-primary"
+            label="Export PDF"
+            filename={surveyExportFilename(survey, 'pdf')}
+            run={exportPdfRun}
+            onError={() => alert('Could not create the PDF. Try Export HTML as a backup.')}
+          />
           <details className="export-menu">
             <summary className="btn btn-secondary">More</summary>
             <div className="export-menu-panel">
               <button type="button" onClick={() => importRef.current?.click()}>Import draft</button>
-              <button type="button" onClick={exportWord}>Export Word</button>
-              <button type="button" onClick={exportHtml}>Export HTML</button>
+              <DownloadButton
+                label="Export Word"
+                filename={surveyExportFilename(survey, 'doc')}
+                run={exportWordRun}
+              />
+              <DownloadButton
+                label="Export HTML"
+                filename={surveyExportFilename(survey, 'html')}
+                run={exportHtmlRun}
+              />
             </div>
           </details>
           <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={e => importJson(e.target.files?.[0])} />

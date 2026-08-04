@@ -11,6 +11,7 @@ import {
 } from './saveStatus.js'
 import {
   clearAllJobData,
+  jobCompletion,
   loadJobDesign,
   loadJobSurvey,
 } from './repo.js'
@@ -57,6 +58,7 @@ export {
   jobCompletion,
   exportJobFile,
   exportJobFileAsync,
+  buildJobFileBlobAsync,
   exportAllJobs,
   importJobFile,
   importJobFromFile,
@@ -81,6 +83,28 @@ export {
 } from './jobHealth.js'
 
 export { computeVerdict } from './networkReadiness.js'
+
+/**
+ * Derives the current phase of a job from its data.
+ * 'survey' → 'design' → 'install' → 'complete'
+ */
+export function computeJobStatus(jobId) {
+  try {
+    const c = jobCompletion(jobId)
+    if (c.golive) return 'complete'
+    if (c.design) return 'install'
+    if (c.survey) return 'design'
+    return 'survey'
+  } catch {
+    return 'survey'
+  }
+}
+
+/** Canonical hash path for opening a job (migration vs install). */
+export function jobWorkspacePath(job) {
+  if (!job?.id) return '/accounts'
+  return job.jobType === 'migration' ? `/job/${job.id}/migration` : `/job/${job.id}`
+}
 
 const STORAGE_VERSION_KEY = 'voip-ops-storage-version'
 const STORAGE_UPGRADE_PENDING_KEY = 'voip-ops-storage-upgrade-pending'

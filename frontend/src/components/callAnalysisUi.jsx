@@ -1,5 +1,5 @@
 /**
- * Shared Call Diagnostic / Packet Capture analysis UI.
+ * Shared Call Analysis ladder UI (CSV + pcap).
  */
 
 import { useState } from 'react'
@@ -65,15 +65,6 @@ export function Findings({ findings, hasError }) {
     <div className="cd-findings">
       <div className="cd-findings-head">
         <div className="cd-section-label">Findings</div>
-        {hasError ? (
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => navigate('/tools/symptom')}
-          >
-            Troubleshoot this
-          </button>
-        ) : null}
       </div>
       <ul className="cd-finding-list">
         {findings.map((f, i) => (
@@ -84,10 +75,10 @@ export function Findings({ findings, hasError }) {
               {f.sipCode ? (
                 <a
                   className="cd-sip-link"
-                  href={`#/tools/reference?q=${encodeURIComponent(String(f.sipCode))}`}
+                  href={`#/tools/codec?q=${encodeURIComponent(String(f.sipCode))}`}
                   onClick={e => {
                     e.preventDefault()
-                    navigate('/tools/reference', { query: { q: String(f.sipCode) } })
+                    navigate('/tools/codec', { query: { q: String(f.sipCode) } })
                   }}
                 >
                   {f.sipCode}
@@ -171,11 +162,11 @@ export function Ladder({ call }) {
                           {ev.code && ev.code >= 300 ? (
                             <a
                               className="cd-pill-link"
-                              href={`#/tools/reference?q=${encodeURIComponent(String(ev.code))}`}
+                              href={`#/tools/codec?q=${encodeURIComponent(String(ev.code))}`}
                               onClick={e => {
                                 e.preventDefault()
                                 e.stopPropagation()
-                                navigate('/tools/reference', { query: { q: String(ev.code) } })
+                                navigate('/tools/codec', { query: { q: String(ev.code) } })
                               }}
                             >
                               {ev.label}

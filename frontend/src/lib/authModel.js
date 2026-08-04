@@ -46,6 +46,28 @@ export async function signInWithMagicLink(email) {
   if (error) throw error
 }
 
+/**
+ * Verify the 6-digit email OTP when the tech opens ClearLine on a
+ * different device than the one that received the magic link.
+ * @returns {Promise<{ ok: true, session: any } | { ok: false, message?: string }>}
+ */
+export async function verifyEmailOtp(email, code) {
+  const sb = getSupabase()
+  if (!sb) return { ok: false, message: 'Supabase is not configured' }
+  const token = String(code || '').trim()
+  if (!email?.trim() || token.length < 6) return { ok: false, message: 'Enter the full code' }
+  const { data, error } = await sb.auth.verifyOtp({
+    email: email.trim(),
+    token,
+    type: 'email',
+  })
+  if (error || !data?.session) {
+    return { ok: false, message: error?.message || 'That code is not valid' }
+  }
+  await cacheSessionLocal(data.session, null)
+  return { ok: true, session: data.session }
+}
+
 export async function signOut() {
   const sb = getSupabase()
   if (sb) await sb.auth.signOut()

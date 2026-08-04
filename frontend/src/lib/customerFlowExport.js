@@ -310,12 +310,21 @@ function buildE911SectionHtml(survey) {
   `
 }
 
-export function exportCustomerFlowReview(account, options = {}) {
-  const html = buildCustomerFlowHtml(account, options)
+export function customerFlowReviewFilename(account) {
   const base = (account.name || account.site || 'customer')
     .replace(/\W+/g, '_')
     .replace(/^_|_$/g, '')
     .toLowerCase() || 'customer'
-  downloadHtml(html, `${base}-call-routing-review-${new Date().toISOString().slice(0, 10)}.html`)
+  return `${base}-call-routing-review-${new Date().toISOString().slice(0, 10)}.html`
+}
+
+export function buildCustomerFlowReviewBlob(account, options = {}) {
+  const html = buildCustomerFlowHtml(account, options)
+  return new Blob([html], { type: 'text/html;charset=utf-8' })
+}
+
+export function exportCustomerFlowReview(account, options = {}) {
+  const html = buildCustomerFlowHtml(account, options)
+  downloadHtml(html, customerFlowReviewFilename(account))
 }
 

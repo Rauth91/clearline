@@ -53,7 +53,7 @@ export function migrationUserFromLine(row, { id, defaultPin = '' } = {}) {
     lastName,
     email: '',
     vmPin: defaultPin,
-    dept:cleanImportedField(row?.Department),
+    dept: '',
     site: '',
     did: dn,
   }
@@ -61,6 +61,49 @@ export function migrationUserFromLine(row, { id, defaultPin = '' } = {}) {
 
 export function normalizeMigrationExtension(value) {
   return String(value ?? '').replace(/\D/g, '').slice(0, 8)
+}
+
+export function parseBulkExtensions(text) {
+  return String(text ?? '')
+    .split(/\r?\n/)
+    .map(line => normalizeMigrationExtension(line))
+    .filter(Boolean)
+}
+
+export function previewBulkExtensionApply(users = [], extensions = []) {
+  const userCount = users.length
+  const extensionCount = extensions.length
+  const countMatches = userCount > 0 && userCount === extensionCount
+  const preview = users.map((user, index) => ({
+    id: user.id,
+    dn: user.dn || '',
+    name: [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || '—',
+    currentExt: normalizeMigrationExtension(user.ext),
+    nextExt: extensions[index] || '',
+  }))
+  return {
+    userCount,
+    extensionCount,
+    countMatches,
+    canApply: countMatches,
+    warning: !userCount
+      ? 'Import users before applying extensions.'
+      : !extensionCount
+        ? 'Paste one extension per line.'
+        : countMatches
+          ? ''
+          : `Count mismatch: ${extensionCount} extension${extensionCount === 1 ? '' : 's'} for ${userCount} user${userCount === 1 ? '' : 's'}. Fix the list before applying.`,
+    preview,
+  }
+}
+
+export function applyBulkExtensions(users = [], extensions = []) {
+  const preview = previewBulkExtensionApply(users, extensions)
+  if (!preview.canApply) return users
+  return users.map((user, index) => ({
+    ...user,
+    ext: extensions[index] || '',
+  }))
 }
 
 export function normalizeMigrationMac(value) {
@@ -139,7 +182,7 @@ export function analyzeDeviceExtensionAssignments(devices = [], extByDn = {}) {
     deviceCounts[extension] = deviceKeys.size
     if (deviceKeys.size > 1) {
       duplicateExtensions.add(extension)
-      approvalKeys[extension] = sharedExtensionApprovalKey(extension, [...deviceKeys])
+      approvalKeys[extension] = sharedExtensionApprovalKey(extension, deviceKeys)
     }
   }
 
@@ -147,9 +190,7 @@ export function analyzeDeviceExtensionAssignments(devices = [], extByDn = {}) {
 }
 
 export function sharedExtensionApprovalKey(extension, deviceKeys = []) {
-  const ext = normalizeMigrationExtension(extension)
-  const keys = [...new Set(deviceKeys.map(String))].sort()
-  return `${ext}|${keys.join(',')}`
+  return `${normalizeMigrationExtension(extension)}:${[...deviceKeys].sort().join(',')}`
 }
 
 export const YEALINK_AUDIT_LABELS = {
@@ -263,4 +304,18 @@ export function migrationE911Fields(data = {}) {
     state:String(data.e911State ?? '').trim().toUpperCase(),
     zip:String(data.e911Zip ?? '').trim(),
   }
+}
+
+/** Side-by-side Meta/NetSapiens build checklist — replaces duplicate System Config forms. */
+export const SYSTEM_CONFIG_CHECKS = [
+  { key: 'reviewMeta', label: 'Review Meta auto attendants, hunt groups, and schedules' },
+  { key: 'rebuildAA', label: 'Rebuild auto attendants in NetSapiens' },
+  { key: 'rebuildHG', label: 'Rebuild hunt groups / queues in NetSapiens' },
+  { key: 'rebuildICM', label: 'Rebuild inbound routing (ICM) in NetSapiens' },
+  { key: 'confirmButtons', label: 'Confirm button layouts / BLF assignments in NetSapiens' },
+  { key: 'validateHours', label: 'Validate business hours and after-hours routing' },
+]
+
+export function systemConfigChecklistComplete(values = {}) {
+  return SYSTEM_CONFIG_CHECKS.every(item => !!values[item.key])
 }

@@ -272,6 +272,84 @@ export function buildFlowModel(design = {}, layout = PREVIEW_LAYOUT) {
   return layoutGraph(buildFlowGraph(design), layout)
 }
 
+/**
+ * BFS walk from start → target. Already-visited nodes are skipped (cycle-safe;
+ * transfers / failover must not loop forever). Returns ordered node objects.
+ * If target is unreachable from start, returns [target] so the rail still renders.
+ */
+export function walkLivePath(graph, targetId, { startId = 'main' } = {}) {
+  const nodes = graph?.nodes || []
+  const edges = graph?.edges || []
+  const nodeById = new Map(nodes.map(n => [n.id, n]))
+  if (!targetId || !nodeById.has(targetId)) return []
+
+  const start = nodeById.has(startId) ? startId : nodes[0]?.id
+  if (!start) return []
+  if (targetId === start) return [nodeById.get(start)]
+
+  const children = new Map()
+  for (const e of edges) {
+    if (!children.has(e.from)) children.set(e.from, [])
+    children.get(e.from).push(e.to)
+  }
+
+  const parent = new Map([[start, null]])
+  const queue = [start]
+  let found = false
+  while (queue.length && !found) {
+    const id = queue.shift()
+    for (const to of children.get(id) || []) {
+      if (parent.has(to)) continue
+      parent.set(to, id)
+      if (to === targetId) {
+        found = true
+        break
+      }
+      queue.push(to)
+    }
+  }
+
+  if (!parent.has(targetId)) return [nodeById.get(targetId)]
+
+  const ids = []
+  const guard = new Set()
+  let cur = targetId
+  while (cur != null) {
+    if (guard.has(cur)) break
+    guard.add(cur)
+    ids.push(cur)
+    cur = parent.get(cur)
+  }
+  ids.reverse()
+  return ids.map(id => nodeById.get(id)).filter(Boolean)
+}
+
+/** First leaf, else last outline step, else first node — used when Start follow has no selection. */
+export function defaultFlowDestination(graph) {
+  const nodes = graph?.nodes || []
+  const leaf = nodes.find(n => n.kind === 'leaf')
+  if (leaf) return leaf.id
+  const outline = graph?.outline || []
+  if (outline.length) return outline[outline.length - 1].id
+  return nodes[0]?.id || null
+}
+
+/** Path nodes + consecutive edge indices for dimming / pulse accent. */
+export function livePathMembership(graph, targetId, opts) {
+  const path = walkLivePath(graph, targetId, opts)
+  if (!path.length) return null
+  const nodeSet = new Set(path.map(n => n.id))
+  const edgeSet = new Set()
+  for (let i = 0; i < path.length - 1; i++) {
+    const from = path[i].id
+    const to = path[i + 1].id
+    ;(graph.edges || []).forEach((e, ei) => {
+      if (e.from === from && e.to === to) edgeSet.add(ei)
+    })
+  }
+  return { path, nodes: nodeSet, edges: edgeSet }
+}
+
 export function plainStepsFromDesign(design = {}) {
   return buildFlowGraph(design).outline.map((s, i) => ({
     n: i + 1,

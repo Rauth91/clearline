@@ -1,0 +1,106 @@
+# ClearLine — project rules
+
+ClearLine is a field console for VoIP technicians. Users are standing in a
+wiring closet, on a phone, mid-cutover, often one-handed. Every decision
+below follows from that.
+
+## The design language is called Instrument
+
+Not "dark mode." The reference is test equipment — a signal analyzer, a
+spectrum monitor. Dark because the room is dark. Glowing because light
+means live. One accent because a second accent would imply a second signal.
+
+**The rule that settles most arguments:**
+
+> If a visual property does not encode state, remove it.
+
+- Colour encodes severity
+- Glow encodes activity
+- Opacity encodes relevance
+- Motion encodes real progress
+
+A border that is only a border is decoration. Cut it.
+
+## Tokens
+
+Never introduce a new colour. Every value comes from `src/styles.css`:
+
+`--bg0` `--bg1` `--bg2` `--glass` `--rim` `--ink` `--ink-soft` `--muted`
+`--line` `--line-strong` `--cta` `--cta-soft` `--accent` `--accent-soft`
+`--ok` `--warn` `--err` `--radius` `--radius-sm` `--font` `--display` `--mono`
+
+Semantic colours (`--ok` / `--warn` / `--err`) are allowed anywhere because
+they encode state. That is the rule working, not an exception to it.
+
+Both `[data-theme='dark']` and light must work. Tokens are theme-scoped
+already, so using them correctly gets this for free.
+
+## Motion
+
+Import from `src/lib/motion.js`. Three curves, product-wide:
+
+- `SPRING` — arrivals, landings, snaps
+- `SETTLE` — fills, growth, reveals
+- `SNAP` — hover, focus, colour changes
+
+A fourth curve is a bug. A hand-written `cubic-bezier` in a component is a
+bug. `prefersReducedMotion` is imported, never redefined.
+
+Reduced motion means **skip to the end state**, never half-play.
+
+## Copy — the disclosure ladder
+
+Every string sits on exactly one rung:
+
+| Rung | Form | Limit |
+|---|---|---|
+| Eyebrow | uppercase, `.18em` tracking | 3–6 words |
+| Lede | one sentence, sentence case | ≤ 12 words |
+| Why | paragraph behind a `<details>` toggle | any |
+| Reference | table, drawer, linked doc | any |
+
+**No paragraph renders by default.** If a string exceeds 12 words it becomes
+a why-drawer, becomes structure, or gets cut. Rationale never occupies
+primary space.
+
+When prose is actually data — timings, offsets, severities, checklists —
+promote it to structure rather than hiding it. A timeline rail beats a
+sentence explaining offsets.
+
+Sentence case everywhere. No exclamation marks. No "please", "simply",
+"successfully". Errors say what happened and what to do, in one sentence.
+
+## Diagrams
+
+Applies to `CallFlowDiagram.jsx` and `TopologyEditor.jsx`:
+
+- Edges are **conduits** — a dim track plus a travelling lit segment
+  (`stroke-dasharray: .1 .9`, animated `stroke-dashoffset`). No arrowheads.
+- Nodes are **terminals** — dark fill, 1px rim, no shadow. Accent glow only
+  on the live path.
+- Hierarchy is **luminance**. Off-path drops to ~22% opacity. Dimmed, never
+  greyed, never desaturated.
+- Background is a **dot field**, not grid lines.
+- On mount, nodes stagger in **following the direction of flow**.
+- Navigation is a **path rail** (horizontal chip strip), not a minimap.
+  Users have a linear question — where does this call end up.
+
+## Quality floor — non-negotiable
+
+- Visible `:focus-visible` outline on every interactive element
+- Keyboard reachable; arrow-key nav on anything with a spatial arrangement
+- `aria-label` on icon-only buttons, `role="status"` on live regions
+- Works at 360px wide
+- No new dependencies without asking
+
+## Things that are already correct — do not restyle
+
+- `FluidDock.jsx` — the parametric dock path and shoulder/socket maths
+- `AuthGooeyHero` in `AuthScreens.jsx` — the metaball filter
+- The token block at the top of `styles.css`
+- `.app-atmosphere` — the ambient bloom
+
+## Working style
+
+One task per commit. Do not refactor adjacent code opportunistically. If a
+task touches more than three files, stop and say so before starting.

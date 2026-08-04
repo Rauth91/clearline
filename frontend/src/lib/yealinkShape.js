@@ -121,6 +121,7 @@ const BY_ID = {
     task: 'Provisioning & Reset',
     models: ALL,
     caveat: 'Factory reset erases local config. Confirm RPS/provisioning URL before resetting field phones.',
+    severity: 'err',
   },
 
   'call-fwd-always': { task: 'Forwarding & DND', models: ALL },
@@ -199,11 +200,17 @@ export function shapeYealinkEntry(item) {
   const task = override.task || CATEGORY_FALLBACK_TASK[item.category] || 'Keys & Display'
   const models = override.models || ALL
   const caveat = override.caveat || item.caveat || ''
+  const severity = override.severity
+    || item.severity
+    || (caveat
+      ? (/reset|erase|do not|must be told|failure/i.test(caveat) ? 'err' : 'warn')
+      : '')
   return {
     ...item,
     task,
     models,
     caveat,
+    severity,
   }
 }
 

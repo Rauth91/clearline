@@ -1,17 +1,17 @@
 /**
- * HomeHub — toolkit-first by default; job-narrative when FEATURES.jobFirstHome.
+ * HomeHub — ops dashboard: jobs by phase, search, quick actions.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  computeJobStatus,
   greetingForHour,
+  jobWorkspacePath,
   listJobs,
-  pickHomeUrgent,
+  openJob,
 } from '../lib/jobModel.js'
-import { FEATURES } from '../lib/features.js'
 import { navigate } from '../lib/router.js'
 import { onDataChanged } from '../lib/dataEvents.js'
-import JobDayNarrative, { buildJobHealth } from './JobDayNarrative.jsx'
 
 const QUICK_ACTIONS = [
   {
@@ -27,14 +27,21 @@ const QUICK_ACTIONS = [
     label: 'Tools',
     blurb: 'Diagnose, configure, and reference',
     icon: '🔧',
-    path: '/tools/calldiag',
+    path: '/tools/callanalysis',
     cta: 'Open tools',
   },
 ]
 
-function ToolkitHome({ refreshKey, onOpenSearch }) {
+const STATUS_COLS = [
+  { id: 'survey',  label: 'Survey',  blurb: 'Site visit needed',      cls: 'is-survey'  },
+  { id: 'design',  label: 'Design',  blurb: 'System design pending',   cls: 'is-design'  },
+  { id: 'install', label: 'Install', blurb: 'Ready to provision',      cls: 'is-install' },
+]
+
+export default function HomeHub({ refreshKey, onOpenSearch }) {
   const searchRef = useRef(null)
   const [tick, setTick] = useState(0)
+  const [showDone, setShowDone] = useState(false)
 
   useEffect(() => onDataChanged((detail) => {
     if (detail.kind !== 'job') return
@@ -53,24 +60,20 @@ function ToolkitHome({ refreshKey, onOpenSearch }) {
   }, [])
 
   const jobs = useMemo(() => {
-    try {
-      return listJobs()
-    } catch {
-      return []
-    }
+    try { return listJobs() } catch { return [] }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey, tick])
 
-  const recentJobs = useMemo(() => jobs.slice(0, 5), [jobs])
-
-  const urgent = useMemo(() => {
-    if (!jobs.length) return null
-    const rows = []
+  const grouped = useMemo(() => {
+    const groups = { survey: [], design: [], install: [], complete: [] }
     for (const job of jobs) {
-      try { rows.push(buildJobHealth(job)) } catch (err) { console.error(err) }
+      const status = computeJobStatus(job.id)
+      groups[status].push(job)
     }
-    return pickHomeUrgent(jobs, rows)
+    return groups
   }, [jobs])
+
+  const activeCount = grouped.survey.length + grouped.design.length + grouped.install.length
 
   const greeting = `${greetingForHour()}.`
   const dateLabel = new Date().toLocaleDateString(undefined, {
@@ -79,6 +82,11 @@ function ToolkitHome({ refreshKey, onOpenSearch }) {
 
   function openSearch() {
     if (typeof onOpenSearch === 'function') onOpenSearch()
+  }
+
+  function goJob(job) {
+    openJob(job.id)
+    navigate(jobWorkspacePath(job))
   }
 
   return (
@@ -101,7 +109,6 @@ function ToolkitHome({ refreshKey, onOpenSearch }) {
         </button>
       </section>
 
-      {/* Quick action cards */}
       <section className="home-actions" aria-label="Quick actions">
         {QUICK_ACTIONS.map(a => (
           <button key={a.id} type="button" className="home-action-card" onClick={() => navigate(a.path)}>
@@ -115,48 +122,71 @@ function ToolkitHome({ refreshKey, onOpenSearch }) {
         ))}
       </section>
 
-      {/* Recent jobs */}
-      {recentJobs.length > 0 && (
-        <section className="home-recent" aria-label="Recent jobs">
-          <div className="home-recent-header">
-            <span className="home-recent-title">Recent jobs</span>
-            <button type="button" className="home-recent-all" onClick={() => navigate('/jobs')}>All jobs →</button>
-          </div>
-          {recentJobs.map(job => {
-            const isMig = job.jobType === 'migration'
-            const route = isMig ? `/job/${job.id}/migration` : `/job/${job.id}`
-            return (
-              <button key={job.id} type="button" className="home-recent-row" onClick={() => navigate(route)}>
-                <span className={`home-recent-type${isMig ? ' is-migration' : ''}`}>{isMig ? 'Migration' : 'Install'}</span>
-                <span className="home-recent-name">{job.customer || 'Unnamed'}{job.site ? ` · ${job.site}` : ''}</span>
-                <span className="home-recent-arrow">→</span>
-              </button>
-            )
-          })}
+      {jobs.length === 0 && (
+        <section className="home-empty" aria-label="Get started">
+          <p className="home-empty-text">Start with an account, then add install or migration jobs under it.</p>
+          <button type="button" className="btn btn-primary" onClick={() => navigate('/accounts', { query: { new: '1' } })}>
+            + New account
+          </button>
         </section>
       )}
 
-      {recentJobs.length === 0 && (
-        <section className="home-empty" aria-label="Get started">
-          <p className="home-empty-text">No jobs yet — create one to get started.</p>
-          <button type="button" className="btn btn-primary" onClick={() => navigate('/jobs?new=1')}>+ New job</button>
+      {jobs.length > 0 && (
+        <section className="home-ops-board" aria-label="Active jobs">
+          <div className="home-ops-board-header">
+            <span className="home-ops-board-title">
+              Active jobs
+              {activeCount > 0 && <span className="home-ops-total">{activeCount}</span>}
+            </span>
+            <button type="button" className="home-recent-all" onClick={() => navigate('/accounts')}>
+              All accounts →
+            </button>
+          </div>
+
+          <div className="home-ops-columns">
+            {STATUS_COLS.map(col => (
+              <div key={col.id} className={`home-ops-col ${col.cls}`}>
+                <div className="home-ops-col-head">
+                  <span className="home-ops-col-title">{col.label}</span>
+                  <span className="home-ops-col-count">{grouped[col.id].length}</span>
+                </div>
+                {grouped[col.id].length === 0 ? (
+                  <p className="home-ops-col-empty">{col.blurb}</p>
+                ) : (
+                  grouped[col.id].map(job => (
+                    <button key={job.id} type="button" className="home-ops-job" onClick={() => goJob(job)}>
+                      <span className="home-ops-job-name">{job.customer || 'Untitled'}</span>
+                      <span className="home-ops-job-meta">
+                        {[job.site, job.jobType === 'migration' ? 'Migration' : 'Install'].filter(Boolean).join(' · ')}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            ))}
+          </div>
+
+          {grouped.complete.length > 0 && (
+            <div className="home-ops-done-row">
+              <button type="button" className="home-ops-done-toggle" onClick={() => setShowDone(v => !v)}>
+                {showDone ? '▾' : '▸'} {grouped.complete.length} completed job{grouped.complete.length !== 1 ? 's' : ''}
+              </button>
+              {showDone && (
+                <div className="home-ops-done-list">
+                  {grouped.complete.map(job => (
+                    <button key={job.id} type="button" className="home-ops-job is-done" onClick={() => goJob(job)}>
+                      <span className="home-ops-job-name">{job.customer || 'Untitled'}</span>
+                      <span className="home-ops-job-meta">
+                        {[job.site, job.jobType === 'migration' ? 'Migration' : 'Install'].filter(Boolean).join(' · ')}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </section>
       )}
     </div>
   )
-}
-
-export default function HomeHub({ profileId, refreshKey, profile, onOpenSearch }) {
-  if (FEATURES.jobFirstHome) {
-    return (
-      <JobDayNarrative
-        profileId={profileId}
-        refreshKey={refreshKey}
-        profile={profile}
-        variant="home"
-        onOpenSearch={onOpenSearch}
-      />
-    )
-  }
-  return <ToolkitHome refreshKey={refreshKey} onOpenSearch={onOpenSearch} />
 }

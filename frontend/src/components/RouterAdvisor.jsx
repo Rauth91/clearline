@@ -15,6 +15,7 @@ import {
   prescriptionToText,
 } from '../lib/routerAdvisor.js'
 import { useRoute } from '../lib/router.js'
+import DownloadButton from './DownloadButton.jsx'
 
 function CopyButton({ text, label = 'Copy' }) {
   const [flash, setFlash] = useState('')
@@ -46,7 +47,6 @@ export default function RouterAdvisor() {
   const [onSiteSbc, setOnSiteSbc] = useState(false)
   const [qosInPlace, setQosInPlace] = useState(false)
   const [customerName, setCustomerName] = useState('')
-  const [showExport, setShowExport] = useState(false)
 
   const filtered = useMemo(() => searchProfiles(vendorQuery), [vendorQuery])
 
@@ -82,15 +82,11 @@ export default function RouterAdvisor() {
     return () => window.clearTimeout(t)
   }, [route.query?.focus, rx.items.length])
 
-  function openCustomerExport() {
+  async function customerExportRun({ onProgress }) {
+    onProgress(0.4)
     const html = prescriptionCustomerHtml(rx)
-    const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `router-advisor-${new Date().toISOString().slice(0, 10)}.html`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 10000)
+    onProgress(1)
+    return new Blob([html], { type: 'text/html;charset=utf-8' })
   }
 
   return (
@@ -187,15 +183,13 @@ export default function RouterAdvisor() {
 
           <div className="btn-row">
             <CopyButton text={allText} label="Copy all as text" />
-            <button type="button" className="btn btn-primary" onClick={openCustomerExport}>
-              Export for customer IT
-            </button>
+            <DownloadButton
+              className="btn-primary"
+              label="Export for customer IT"
+              filename={`router-advisor-${new Date().toISOString().slice(0, 10)}.html`}
+              run={customerExportRun}
+            />
           </div>
-          {showExport && (
-            <p className="parse-note parse-error">
-              Pop-up blocked — allow pop-ups or use Copy all as text.
-            </p>
-          )}
         </aside>
 
         <div className="ra-output" aria-label="Prescription">

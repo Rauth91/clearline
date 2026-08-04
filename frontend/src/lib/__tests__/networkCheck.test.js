@@ -32,7 +32,7 @@ describe('buildVerdictActions', () => {
     }, 20)
     const actions = buildVerdictActions(v, { seats: 20 })
     expect(actions.some(a => /Router Advisor/i.test(a.action) && a.href?.includes('sip-alg'))).toBe(true)
-    expect(actions.some(a => a.href === '/tools/pcap')).toBe(true)
+    expect(actions.some(a => a.href === '/tools/callanalysis')).toBe(true)
     expect(actions.some(a => a.href?.includes('focus=qos'))).toBe(true)
     expect(actions.some(a => /kbps/i.test(a.action))).toBe(true)
   })

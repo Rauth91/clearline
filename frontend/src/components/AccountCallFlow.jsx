@@ -15,7 +15,7 @@ import {
   getAccount,
   saveAccount,
 } from '../lib/accountModel.js'
-import { exportCustomerFlowReview } from '../lib/customerFlowExport.js'
+import { buildCustomerFlowReviewBlob, customerFlowReviewFilename } from '../lib/customerFlowExport.js'
 import {
   createEmptyRoute,
   mergeCallFlowPayload,
@@ -23,9 +23,10 @@ import {
   routeToDiagramDesign,
 } from '../lib/callFlowShape.js'
 import { makeId } from '../lib/surveyModel.js'
-import { FEATURES } from '../lib/features.js'
 import { getAllTemplates, applyTemplate, saveAsTemplate } from '../lib/callFlowTemplates.js'
-import { exportCallFlowPdf } from '../lib/callFlowPdf.js'
+import { exportCallFlowPdf, callFlowPdfFilename } from '../lib/callFlowPdf.js'
+import DownloadButton from './DownloadButton.jsx'
+import { useCrumpleDelete } from './CrumpleDelete.jsx'
 
 // ── History reducer for undo/redo ─────────────────────────────────────────────
 const HISTORY_LIMIT = 20
@@ -288,9 +289,7 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
       await navigator.clipboard.writeText(text)
       setCopyNote({
         type: 'ok',
-        text: FEATURES.haloIntegration
-          ? 'Copied — paste into Halo KB or a ticket note.'
-          : 'Copied — paste into a note or runbook.',
+        text: 'Copied — paste into a note or runbook.',
       })
     } catch {
       setCopyNote({ type: 'error', text: 'Could not copy. Try the plain-text summary below.' })
@@ -307,24 +306,18 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
     }
   }
 
-  function handleShareCustomer() {
-    try {
-      exportCustomerFlowReview(account)
-      setCopyNote({ type: 'ok', text: 'Customer review HTML downloaded — email it or Print → PDF.' })
-    } catch (err) {
-      console.error(err)
-      setCopyNote({ type: 'error', text: 'Could not build customer review.' })
-    }
+  async function customerReviewRun({ onProgress }) {
+    onProgress(0.3)
+    const blob = buildCustomerFlowReviewBlob(account)
+    onProgress(1)
+    return blob
   }
 
-  async function handlePdf() {
-    try {
-      await exportCallFlowPdf(account)
-      setCopyNote({ type: 'ok', text: 'PDF downloaded.' })
-    } catch (err) {
-      console.error(err)
-      setCopyNote({ type: 'error', text: 'PDF export failed.' })
-    }
+  async function pdfRun({ onProgress }) {
+    onProgress(0.2)
+    const blob = await exportCallFlowPdf(account)
+    onProgress(1)
+    return blob
   }
 
   if (!account) {
@@ -351,7 +344,6 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
             <h1>{account.name || 'Untitled account'}</h1>
             <p>
               {account.site || 'Site TBD'}
-              {FEATURES.haloIntegration && account.haloClientId ? ` · Halo ${account.haloClientId}` : ''}
               {` · ${routes.length} route${routes.length === 1 ? '' : 's'}`}
             </p>
             <small className="job-updated">
@@ -363,8 +355,22 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
           <div className="survey-actions">
             <button type="button" className="btn btn-secondary" onClick={onBack}>Accounts</button>
             <button type="button" className="btn btn-secondary" onClick={handleCopySummary}>Copy summary</button>
-            <button type="button" className="btn btn-secondary" onClick={handleShareCustomer}>Customer review</button>
-            <button type="button" className="btn btn-secondary" onClick={handlePdf}>Download PDF</button>
+            <DownloadButton
+              className="btn-secondary"
+              label="Customer review"
+              filename={customerFlowReviewFilename(account)}
+              run={customerReviewRun}
+              onDone={() => setCopyNote({ type: 'ok', text: 'Customer review HTML downloaded — email it or Print → PDF.' })}
+              onError={() => setCopyNote({ type: 'error', text: 'Could not build customer review.' })}
+            />
+            <DownloadButton
+              className="btn-secondary"
+              label="Download PDF"
+              filename={callFlowPdfFilename(account)}
+              run={pdfRun}
+              onDone={() => setCopyNote({ type: 'ok', text: 'PDF downloaded.' })}
+              onError={() => setCopyNote({ type: 'error', text: 'PDF export failed.' })}
+            />
             <button type="button" className="btn btn-secondary" onClick={handleExport}>Export</button>
             <button type="button" className="btn btn-primary" onClick={handleSave}>Save</button>
           </div>
@@ -374,7 +380,14 @@ export default function AccountCallFlow({ accountId, onBack, embedded = false })
       {embedded && (
         <div className="account-flow-embedded-actions survey-actions">
           <button type="button" className="btn btn-secondary" onClick={handleCopySummary}>Copy summary</button>
-          <button type="button" className="btn btn-secondary" onClick={handlePdf}>PDF</button>
+          <DownloadButton
+            className="btn-secondary"
+            label="PDF"
+            filename={callFlowPdfFilename(account)}
+            run={pdfRun}
+            onDone={() => setCopyNote({ type: 'ok', text: 'PDF downloaded.' })}
+            onError={() => setCopyNote({ type: 'error', text: 'PDF export failed.' })}
+          />
           <button type="button" className="btn btn-secondary" onClick={handleExport}>Export</button>
           <button type="button" className="btn btn-primary" onClick={handleSave}>Save</button>
           {savedFlash && <small className="job-updated">Saved</small>}
@@ -643,11 +656,6 @@ function AccountPanel({ account, activeRoute, patchMeta, patchActiveRoute, onClo
       <FieldRow label="Site">
         <input value={account.site || ''} onChange={e => patchMeta({ site: e.target.value })} />
       </FieldRow>
-      {FEATURES.haloIntegration && (
-        <FieldRow label="Halo client ID">
-          <input value={account.haloClientId || ''} onChange={e => patchMeta({ haloClientId: e.target.value })} />
-        </FieldRow>
-      )}
       <FieldRow label="Account number">
         <input value={account.accountNumber || ''} onChange={e => patchMeta({ accountNumber: e.target.value })} />
       </FieldRow>
@@ -677,10 +685,20 @@ function AccountPanel({ account, activeRoute, patchMeta, patchActiveRoute, onClo
 }
 
 function NumbersPanel({ mainRows, patchMainNumber, addMainNumber, removeMainNumber, onClose }) {
+  const rows = useRef(new Map())
+  const { crumple, bin } = useCrumpleDelete()
   return (
     <PanelWrap title="Phone numbers" kicker="Entry" onClose={onClose}>
+      {bin}
       {mainRows.map((row, i) => (
-        <div key={row.id || i} className="acf-number-row">
+        <div
+          key={row.id || i}
+          className="acf-number-row"
+          ref={el => {
+            if (el) rows.current.set(row.id || i, el)
+            else rows.current.delete(row.id || i)
+          }}
+        >
           <FieldRow label="Number">
             <input
               value={row.number || ''}
@@ -696,7 +714,13 @@ function NumbersPanel({ mainRows, patchMainNumber, addMainNumber, removeMainNumb
                 placeholder="Main / Sales"
               />
               {mainRows.length > 1 && row.id !== 'placeholder' && (
-                <button type="button" className="btn btn-secondary" onClick={() => removeMainNumber(i)}>Remove</button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => crumple(rows.current.get(row.id || i), () => removeMainNumber(i))}
+                >
+                  Remove
+                </button>
               )}
             </div>
           </FieldRow>
@@ -738,6 +762,8 @@ function AAPanel({ aa, patchFlow, onClose }) {
   const usedDigits = DIGITS.filter(d => String(aa[`option${d}`] || '').trim())
   const availDigits = DIGITS.filter(d => !String(aa[`option${d}`] || '').trim())
   const [addDigit, setAddDigit] = useState(availDigits[0] || '0')
+  const optionRefs = useRef(new Map())
+  const { crumple, bin } = useCrumpleDelete()
 
   const displayDigits = [...usedDigits]
   // Include addDigit row if actively being added
@@ -758,6 +784,7 @@ function AAPanel({ aa, patchFlow, onClose }) {
 
   return (
     <PanelWrap title="Auto attendant" kicker="Menu" onClose={onClose}>
+      {bin}
       <FieldRow label="Enabled">
         <select value={aa.enabled || ''} onChange={e => patchFlow('autoAttendant', 'enabled', e.target.value)}>
           {YES_NO.map(o => <option key={o.value || 'blank'} value={o.value}>{o.label}</option>)}
@@ -784,7 +811,11 @@ function AAPanel({ aa, patchFlow, onClose }) {
           destType={aa[`optionType${digit}`] || ''}
           onChangeValue={v => patchFlow('autoAttendant', `option${digit}`, v)}
           onChangeType={t => patchFlow('autoAttendant', `optionType${digit}`, t)}
-          onRemove={() => removeOption(digit)}
+          rowRef={el => {
+            if (el) optionRefs.current.set(digit, el)
+            else optionRefs.current.delete(digit)
+          }}
+          onRemove={() => crumple(optionRefs.current.get(digit), () => removeOption(digit))}
         />
       ))}
       {adding && (
@@ -817,9 +848,9 @@ function AAPanel({ aa, patchFlow, onClose }) {
   )
 }
 
-function AAOptionRow({ digit, value, destType, onChangeValue, onChangeType, onRemove }) {
+function AAOptionRow({ digit, value, destType, onChangeValue, onChangeType, onRemove, rowRef }) {
   return (
-    <div className="acf-aa-row">
+    <div className="acf-aa-row" ref={rowRef}>
       <div className="acf-digit-badge">{digit}</div>
       <select value={destType} onChange={e => onChangeType(e.target.value)} className="acf-type-select">
         <option value="">Type</option>

@@ -2,10 +2,12 @@
  * Memoized Site Survey panel bodies — each receives only its state slice + stable handlers.
  */
 
-import { memo } from 'react'
+import { memo, useRef } from 'react'
 import SurveyPhotos from './SurveyPhotos.jsx'
 import TopologyEditor from './TopologyEditor.jsx'
 import E911Section from './E911Section.jsx'
+import { useCrumpleDelete } from './CrumpleDelete.jsx'
+import TipChips, { insertTipHeading } from './TipChips.jsx'
 import {
   NETWORK_RUN_COUNT,
   QUALITY_THRESHOLDS,
@@ -51,7 +53,16 @@ export const SurveySitePanel = memo(function SurveySitePanel({
       </div>
       <label className="survey-field full">
         Site / access notes
-        <textarea value={customer.notes} onChange={e => onCustomerField('notes', e.target.value)} placeholder="Parking, MDF location, VLAN notes, firewall owner, access instructions..." />
+        <TipChips
+          tips={['Parking', 'MDF location', 'VLAN notes', 'Firewall owner', 'Access instructions']}
+          value={customer.notes}
+          onInsert={(tip) => onCustomerField('notes', insertTipHeading(customer.notes, tip))}
+        />
+        <textarea
+          value={customer.notes}
+          onChange={e => onCustomerField('notes', e.target.value)}
+          placeholder="e.g. MDF is in the basement cage"
+        />
       </label>
     </>
   )
@@ -64,8 +75,11 @@ export const SurveyNumbersPanel = memo(function SurveyNumbersPanel({
   onUpdate,
   onRemove,
 }) {
+  const rows = useRef(new Map())
+  const { crumple, bin } = useCrumpleDelete()
   return (
     <>
+      {bin}
       <div className="design-list-head">
         <div>
           <h3>Company main numbers</h3>
@@ -89,11 +103,18 @@ export const SurveyNumbersPanel = memo(function SurveyNumbersPanel({
           </div>
         )}
         {mainNumbers.map(entry => (
-          <div className="main-number-row" key={entry.id}>
+          <div
+            className="main-number-row"
+            key={entry.id}
+            ref={el => {
+              if (el) rows.current.set(entry.id, el)
+              else rows.current.delete(entry.id)
+            }}
+          >
             <input value={entry.label} onChange={e => onUpdate(entry.id, 'label', e.target.value)} placeholder="Main line / Fax / Toll-free" />
             <input value={entry.number} onChange={e => onUpdate(entry.id, 'number', e.target.value)} placeholder="337-555-0100" />
             <input value={entry.notes} onChange={e => onUpdate(entry.id, 'notes', e.target.value)} placeholder="Rings to reception, port from carrier..." />
-            <button type="button" onClick={() => onRemove(entry.id)}>Remove</button>
+            <button type="button" onClick={() => crumple(rows.current.get(entry.id), () => onRemove(entry.id))}>Remove</button>
           </div>
         ))}
       </div>
@@ -108,8 +129,11 @@ export const SurveyUsersPanel = memo(function SurveyUsersPanel({
   onUpdate,
   onRemove,
 }) {
+  const rows = useRef(new Map())
+  const { crumple, bin } = useCrumpleDelete()
   return (
     <>
+      {bin}
       <div className="design-list-head">
         <div>
           <h3>Users and phones</h3>
@@ -138,7 +162,14 @@ export const SurveyUsersPanel = memo(function SurveyUsersPanel({
           </div>
         )}
         {users.map(user => (
-          <div className="user-row" key={user.id}>
+          <div
+            className="user-row"
+            key={user.id}
+            ref={el => {
+              if (el) rows.current.set(user.id, el)
+              else rows.current.delete(user.id)
+            }}
+          >
             <input value={user.name} onChange={e => onUpdate(user.id, 'name', e.target.value)} placeholder="Jane Tech" />
             <input value={user.username} onChange={e => onUpdate(user.id, 'username', e.target.value)} placeholder="jane.tech" />
             <input type="email" value={user.email || ''} onChange={e => onUpdate(user.id, 'email', e.target.value)} placeholder="jane@company.com" />
@@ -146,7 +177,7 @@ export const SurveyUsersPanel = memo(function SurveyUsersPanel({
             <input value={user.phone || ''} onChange={e => onUpdate(user.id, 'phone', e.target.value)} placeholder="337-555-0100" />
             <input value={user.location || ''} onChange={e => onUpdate(user.id, 'location', e.target.value)} placeholder="Front desk" />
             <input value={user.role} onChange={e => onUpdate(user.id, 'role', e.target.value)} placeholder="User" />
-            <button type="button" onClick={() => onRemove(user.id)}>Remove</button>
+            <button type="button" onClick={() => crumple(rows.current.get(user.id), () => onRemove(user.id))}>Remove</button>
           </div>
         ))}
       </div>

@@ -1,0 +1,62 @@
+/* ── Screen route transitions ───────────────────────────────── */
+
+.screen-root {
+  position: relative;
+  min-width: 0;
+}
+
+.screen {
+  min-width: 0;
+}
+
+.screen.is-exit {
+  animation: screen-exit 200ms var(--snap) forwards;
+  pointer-events: none;
+}
+
+.screen.is-enter > * {
+  animation: screen-enter 520ms var(--settle) both;
+  animation-delay: calc(var(--i, 0) * 55ms);
+}
+
+.screen-warm {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.screen-fallback {
+  min-height: 120px;
+}
+
+@keyframes screen-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes screen-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen.is-exit,
+  .screen.is-enter > * {
+    animation: none;
+  }
+}

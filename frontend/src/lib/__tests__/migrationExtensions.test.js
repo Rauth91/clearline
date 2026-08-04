@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   analyzeDeviceExtensionAssignments,
   analyzeMigrationExtensions,
-  buildYealinkServerAudit,
+  applyBulkExtensions,
   cleanImportedField,
   cleanMigrationName,
   extensionsByDn,
@@ -11,9 +11,12 @@ import {
   netSapiensPhoneModel,
   normalizeMigrationExtension,
   normalizeMigrationMac,
+  parseBulkExtensions,
+  previewBulkExtensionApply,
+  sharedExtensionApprovalKey,
   splitMigrationName,
-  yealinkAuditExceptions,
-  yealinkServerDeviceFromRow,
+  SYSTEM_CONFIG_CHECKS,
+  systemConfigChecklistComplete,
 } from '../migrationExtensions.js'
 
 describe('migration extension import', () => {
@@ -39,6 +42,7 @@ describe('migration extension import', () => {
       firstName:'Jane',
       lastName:'Doe',
       vmPin:'2468',
+      dept:'',
     })
     expect(migrationUserFromLine({
       'Directory number':'2255551234',
@@ -97,6 +101,33 @@ describe('custom migration extensions', () => {
     expect([...result.missingIds]).toEqual(['a'])
     expect([...result.collisions]).toEqual(['1001'])
   })
+
+  it('parses and applies bulk extensions only when counts match', () => {
+    expect(parseBulkExtensions('1001\n1002\n\n10-03')).toEqual(['1001', '1002', '1003'])
+
+    const users = [
+      { id:'a', dn:'2255551000', firstName:'Ann', lastName:'A', ext:'' },
+      { id:'b', dn:'2255552000', firstName:'Bob', lastName:'B', ext:'' },
+    ]
+    const mismatch = previewBulkExtensionApply(users, ['1001'])
+    expect(mismatch.canApply).toBe(false)
+    expect(mismatch.warning).toMatch(/Count mismatch/)
+    expect(applyBulkExtensions(users, ['1001'])).toEqual(users)
+
+    const match = previewBulkExtensionApply(users, ['1001', '1002'])
+    expect(match.canApply).toBe(true)
+    expect(applyBulkExtensions(users, ['1001', '1002']).map(u => u.ext))
+      .toEqual(['1001', '1002'])
+  })
+})
+
+describe('system config checklist', () => {
+  it('tracks side-by-side build completion without requiring legacy forms', () => {
+    expect(SYSTEM_CONFIG_CHECKS.length).toBeGreaterThanOrEqual(4)
+    expect(systemConfigChecklistComplete({})).toBe(false)
+    const values = Object.fromEntries(SYSTEM_CONFIG_CHECKS.map(item => [item.key, true]))
+    expect(systemConfigChecklistComplete(values)).toBe(true)
+  })
 })
 
 describe('device extension assignments', () => {
@@ -133,87 +164,9 @@ describe('device extension assignments', () => {
     expect(result.deviceCounts['1001']).toBe(1)
   })
 
-  it('changes the approval key when the phones on a shared extension change', () => {
-    const first = analyzeDeviceExtensionAssignments([
-      { mac:'000000000001', line1:'1001' },
-      { mac:'000000000002', line1:'1001' },
-    ])
-    const reordered = analyzeDeviceExtensionAssignments([
-      { mac:'000000000002', line1:'1001' },
-      { mac:'000000000001', line1:'1001' },
-    ])
-    const changed = analyzeDeviceExtensionAssignments([
-      { mac:'000000000001', line1:'1001' },
-      { mac:'000000000003', line1:'1001' },
-    ])
-
-    expect(first.approvalKeys['1001']).toBe(reordered.approvalKeys['1001'])
-    expect(first.approvalKeys['1001']).not.toBe(changed.approvalKeys['1001'])
-  })
-})
-
-describe('Yealink server audit', () => {
-  it('parses the optional server export fields', () => {
-    const device = yealinkServerDeviceFromRow({
-      MAC:' 80:5E:0C:B8:8F:91 ',
-      'Machine ID(Serial Number)':'201087E073216500',
-      Model:'SIP-T53W',
-      'Device Name':'Active 7',
-      Site:'Customer/Main',
-      'Device Status':'ONLINE',
-      'Valid Status':'normal',
-      'Last Report Time':'2026-07-30 06:59:43',
-      'Firmware Version':'96.86.0.70',
-      'Account Type 1':'SIP',
-      'Account Info 1':'9853044260',
-      'Account Status 1':'registered',
-    }, { id:'server-1' })
-
-    expect(device).toMatchObject({
-      id:'server-1',
-      mac:'805e0cb88f91',
-      model:'SIP-T53W',
-      status:'online',
-      lastReport:'2026-07-30 06:59:43',
-      firmwareVersion:'96.86.0.70',
-      accounts:[{ type:'SIP', info:'9853044260', status:'registered' }],
-    })
-    expect(normalizeMigrationMac('80-5E-0C-B8-8F-91')).toBe('805e0cb88f91')
-  })
-
-  it('classifies every server-to-migration comparison category', () => {
-    const serverDevices = [
-      { id:'ready', mac:'000000000001', status:'online', accounts:[{ info:'1001' }] },
-      { id:'verify', mac:'000000000002', status:'offline', accounts:[{ info:'1002' }] },
-      { id:'investigate', mac:'000000000003', status:'online', accounts:[{ info:'1003' }] },
-      { id:'cleanup', mac:'000000000004', status:'offline', accounts:[{ info:'1004' }] },
-      { id:'strong', mac:'000000000005', status:'offline', accounts:[] },
-    ]
-    const rows = buildYealinkServerAudit(serverDevices, [
-      { mac:'000000000001' },
-      { mac:'000000000002' },
-    ])
-    const categories = Object.fromEntries(rows.map(row => [row.id, row.category]))
-
-    expect(categories).toEqual({
-      ready:'ready',
-      verify:'verify',
-      investigate:'investigate',
-      cleanup:'cleanup',
-      strong:'strongCleanup',
-    })
-    expect(yealinkAuditExceptions(rows).map(row => row.id))
-      .toEqual(['verify', 'investigate', 'cleanup', 'strong'])
-  })
-
-  it('warns when one SIP account appears on multiple MACs', () => {
-    const rows = buildYealinkServerAudit([
-      { id:'a', mac:'000000000001', status:'online', accounts:[{ info:'1001' }] },
-      { id:'b', mac:'000000000002', status:'offline', accounts:[{ info:'1001' }] },
-    ], [{ mac:'000000000001' }])
-
-    expect(rows[0].duplicateAccounts).toEqual(['1001'])
-    expect(rows[1].duplicateAccounts).toEqual(['1001'])
-    expect(yealinkAuditExceptions(rows).map(row => row.id)).toEqual(['a', 'b'])
+  it('builds stable approval keys for intentionally shared extensions', () => {
+    expect(normalizeMigrationMac('AA:BB:CC:DD:EE:FF')).toBe('aabbccddeeff')
+    expect(sharedExtensionApprovalKey('1001', ['phone-b', 'phone-a']))
+      .toBe('1001:phone-a,phone-b')
   })
 })

@@ -11,8 +11,8 @@ import {
   searchAccounts,
   setActiveAccountId,
 } from '../lib/accountModel.js'
-import { FEATURES } from '../lib/features.js'
 import { scoreAccountCompletion } from '../lib/callFlowShape.js'
+import { navigate, useRoute } from '../lib/router.js'
 
 const EMPTY_FORM = {
   name: '',
@@ -23,6 +23,7 @@ const EMPTY_FORM = {
 }
 
 export default function AccountsHub({ onOpenAccount, refreshKey }) {
+  const route = useRoute()
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all') // 'all' | 'incomplete' | 'complete'
   const allAccounts = searchAccounts(query)
@@ -39,9 +40,16 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
   void refreshKey
 
   useEffect(() => {
+    if (route.query?.new === '1') {
+      setForm(EMPTY_FORM)
+      setShowNew(true)
+    }
+  }, [route.query?.new, refreshKey])
+
+  useEffect(() => {
     if (!showNew) return undefined
     function onKey(e) {
-      if (e.key === 'Escape') setShowNew(false)
+      if (e.key === 'Escape') closeNew()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -50,6 +58,12 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
   function openNew() {
     setForm(EMPTY_FORM)
     setShowNew(true)
+  }
+
+  function closeNew() {
+    setShowNew(false)
+    setForm(EMPTY_FORM)
+    if (route.query?.new === '1') navigate('/accounts', { replace: true })
   }
 
   function submitNew(e) {
@@ -63,6 +77,7 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
     })
     setShowNew(false)
     setForm(EMPTY_FORM)
+    if (route.query?.new === '1') navigate('/accounts', { replace: true })
     onOpenAccount(account.id)
   }
 
@@ -142,9 +157,6 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
 
       <p className="jobs-privacy-note">
         <strong>Support docs stay on this device</strong> until you export them.
-        {FEATURES.haloIntegration
-          ? ' Fill Halo client ID now so a later sync can push summaries into Halo KB for AI suggestions.'
-          : ''}
       </p>
 
       <div className="accounts-filters">
@@ -154,9 +166,7 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
             type="search"
             value={query}
             onChange={e => setQuery(e.target.value)}
-            placeholder={FEATURES.haloIntegration
-              ? 'Search by name, site, DID, or Halo ID…'
-              : 'Search by name, site, or DID…'}
+            placeholder="Search by name, site, or DID…"
           />
         </label>
         <div className="accounts-filter-tabs">
@@ -210,9 +220,7 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
                 }}
               >
                 <div className="survey-kicker">
-                  {account.mainDid
-                    || (FEATURES.haloIntegration && account.haloClientId)
-                    || 'Account'}
+                  {account.mainDid || 'Account'}
                 </div>
                 <h2>{account.name || 'Untitled account'}</h2>
                 <p>{account.site || 'Site TBD'}</p>
@@ -221,9 +229,6 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
                   <span className="job-badge">
                     {routeCount} route{routeCount === 1 ? '' : 's'}
                   </span>
-                  {FEATURES.haloIntegration && account.haloClientId && (
-                    <span className="job-badge">Halo {account.haloClientId}</span>
-                  )}
                 </div>
                 <small className="job-updated">
                   Updated {account.updatedAt ? new Date(account.updatedAt).toLocaleString() : '—'}
@@ -257,7 +262,7 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
           className="section-modal-backdrop"
           role="presentation"
           onMouseDown={e => {
-            if (e.target === e.currentTarget) setShowNew(false)
+            if (e.target === e.currentTarget) closeNew()
           }}
         >
           <div
@@ -271,13 +276,11 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
                 <div className="survey-kicker">Accounts</div>
                 <h2 id="new-account-title">New account</h2>
                 <p>
-                  {FEATURES.haloIntegration
-                    ? 'Customer identity for the call-flow chart. Halo ID is optional for now.'
-                    : 'Customer identity for the call-flow chart.'}
+                  Customer identity for the call-flow chart.
                 </p>
               </div>
               <div className="section-modal-nav">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowNew(false)}>
+                <button type="button" className="btn btn-secondary" onClick={closeNew}>
                   Cancel
                 </button>
               </div>
@@ -309,16 +312,6 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
                     placeholder="555-0100"
                   />
                 </label>
-                {FEATURES.haloIntegration && (
-                  <label className="field">
-                    <span>Halo client ID</span>
-                    <input
-                      value={form.haloClientId}
-                      onChange={e => setForm(f => ({ ...f, haloClientId: e.target.value }))}
-                      placeholder="Optional — for later KB sync"
-                    />
-                  </label>
-                )}
                 <label className="field">
                   <span>Account number</span>
                   <input
@@ -329,7 +322,7 @@ export default function AccountsHub({ onOpenAccount, refreshKey }) {
                 </label>
                 <div className="btn-row">
                   <button type="submit" className="btn btn-primary">Create account</button>
-                  <button type="button" className="btn btn-secondary" onClick={() => setShowNew(false)}>
+                  <button type="button" className="btn btn-secondary" onClick={closeNew}>
                     Cancel
                   </button>
                 </div>

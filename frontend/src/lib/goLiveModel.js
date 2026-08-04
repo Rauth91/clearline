@@ -481,10 +481,14 @@ export async function downloadGoLivePdf(golive, meta, provision) {
       }
     }
 
-    pdf.save(filenameBase(golive, meta, 'pdf'))
+    return pdf.output('blob')
   } finally {
     iframe.remove()
   }
+}
+
+export function goLiveExportFilename(golive, meta, ext = 'pdf') {
+  return filenameBase(golive, meta, ext)
 }
 
 /**
