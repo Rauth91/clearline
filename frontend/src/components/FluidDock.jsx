@@ -291,14 +291,42 @@ export default function FluidDock({ activeId, onSelect, onWarm }) {
     }
   }
 
-  const colorIndex = hoverIndex != null ? hoverIndex : indexOf(activeId)
-  const accent = TABS[colorIndex]?.color || DOCK_ACCENT
   const cx = beadPx || frameW / 2
   const cy = H - BAR
   const W = Math.max(frameW, 300)
   const skin = buildSkinPath(W, cx)
   const live = hovering || dragging || reduceMotion
   const moveEase = live ? 'none' : `${DUR.glide}ms ${SNAP}`
+
+  // Lift only when the bead is actually over a tab — not when nearest flips early.
+  let seatedIndex = null
+  if (!hovering && !dragging) {
+    seatedIndex = indexOf(activeId)
+  } else {
+    const frame = frameRef.current
+    const track = trackRef.current
+    if (frame && track) {
+      const fr = frame.getBoundingClientRect()
+      const buttons = track.querySelectorAll('[role="tab"]')
+      let best = -1
+      let bestDist = Infinity
+      let bestHalf = R
+      buttons.forEach((btn, i) => {
+        const r = btn.getBoundingClientRect()
+        const mid = r.left - fr.left + r.width / 2
+        const d = Math.abs(cx - mid)
+        if (d < bestDist) {
+          bestDist = d
+          best = i
+          bestHalf = r.width * 0.38
+        }
+      })
+      if (best >= 0 && bestDist <= bestHalf) seatedIndex = best
+    }
+  }
+
+  const colorIndex = seatedIndex != null ? seatedIndex : (hoverIndex != null ? hoverIndex : indexOf(activeId))
+  const accent = TABS[colorIndex]?.color || DOCK_ACCENT
 
   return (
     <nav className="fluid-dock" aria-label="Primary">
@@ -385,7 +413,7 @@ export default function FluidDock({ activeId, onSelect, onWarm }) {
           onKeyDown={onKeyDown}
         >
           {TABS.map((tab, i) => {
-            const hot = hoverIndex === i || (hoverIndex == null && activeId === tab.id)
+            const seated = seatedIndex === i
             return (
               <button
                 key={tab.id}
@@ -393,14 +421,14 @@ export default function FluidDock({ activeId, onSelect, onWarm }) {
                 role="tab"
                 aria-selected={activeId === tab.id}
                 tabIndex={activeId === tab.id ? 0 : -1}
-                className={`fluid-dock-tab${activeId === tab.id ? ' is-active' : ''}${hot ? ' is-hot' : ''}`}
+                className={`fluid-dock-tab${activeId === tab.id ? ' is-active' : ''}${seated ? ' is-seated' : ''}`}
                 style={{ '--tab-accent': tab.color || DOCK_ACCENT }}
                 onClick={() => onSelect?.(tab.id)}
                 onPointerDown={() => warmAround(i)}
               >
                 <span
                   className="fluid-dock-icon"
-                  style={hot ? { color: accent } : undefined}
+                  style={seated ? { color: accent } : undefined}
                 >
                   <Icon name={tab.id} />
                 </span>

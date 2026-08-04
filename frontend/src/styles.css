@@ -11147,8 +11147,8 @@ a.btn {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   height: 56px;
-  align-items: center;
-  padding: 0 10px 6px;
+  align-items: stretch;
+  padding: 0 10px;
 }
 
 .fluid-dock-tab {
@@ -11157,8 +11157,8 @@ a.btn {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  min-height: 48px;
+  min-height: 0;
+  height: 100%;
   border: 0;
   background: none;
   color: rgba(255, 255, 255, 0.42);
@@ -11166,7 +11166,7 @@ a.btn {
   font-weight: 600;
   letter-spacing: 0.02em;
   cursor: pointer;
-  padding: 4px 2px;
+  padding: 0;
   transition: color 160ms ease;
 }
 
@@ -11176,20 +11176,21 @@ a.btn {
   width: 44px;
   height: 44px;
   color: inherit;
+  /* Bead center sits at the top of the 56px track; resting icon center is mid-track. */
   transition: color 180ms ease, transform 200ms var(--snap);
 }
 
-.fluid-dock-tab.is-hot .fluid-dock-icon {
-  transform: translateY(-28px);
-  color: var(--acc, var(--tab-accent));
-}
-
-.fluid-dock-tab.is-active:not(.is-hot) .fluid-dock-icon {
+.fluid-dock-tab.is-seated .fluid-dock-icon {
   transform: translateY(-28px);
   color: var(--acc, var(--tab-accent));
 }
 
 .fluid-dock-tab-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 4px;
+  text-align: center;
   font-family: var(--display);
   font-weight: 600;
   opacity: 0;
@@ -11199,8 +11200,7 @@ a.btn {
   pointer-events: none;
 }
 
-.fluid-dock-tab.is-hot .fluid-dock-tab-label,
-.fluid-dock-tab.is-active .fluid-dock-tab-label {
+.fluid-dock-tab.is-seated .fluid-dock-tab-label {
   opacity: 1;
   transform: translateY(0);
 }
