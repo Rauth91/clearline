@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Glass Aesthetic Preview v3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg0: #ece8f4;
+    --glass: rgba(255,255,255,0.62);
+    --rim: rgba(88,28,180,0.14);
+    --ink: #12081f;
+    --ink-soft: #4c4560;
+    --muted: #6b6580;
+    --accent: #0891b2;
+    --accent-soft: rgba(8,145,178,0.12);
+    --ok: #059669;       --ok-soft: rgba(5,150,105,0.12);
+    --warn: #d97706;     --warn-soft: rgba(217,119,6,0.12);
+    --err: #dc2626;      --err-soft: rgba(220,38,38,0.12);
+    --shadow: 0 8px 32px rgba(40,20,70,0.10), 0 1px 2px rgba(40,20,70,0.06);
+    --radius: 14px; --radius-sm: 10px;
+    --display: 'Outfit', system-ui, sans-serif;
+    --font: 'DM Sans', system-ui, sans-serif;
+    --spring: cubic-bezier(.22,1.4,.36,1);
+    --grad: linear-gradient(120deg, #7c3aed, #0891b2);
+  }
+  [data-theme='dark'] {
+    --bg0: #07060f;
+    --glass: rgba(20,14,42,0.65);
+    --rim: rgba(167,139,250,0.20);
+    --ink: #f2f0ff;
+    --ink-soft: #a8a0c8;
+    --muted: #6e6890;
+    --accent: #22d3ee;
+    --accent-soft: rgba(34,211,238,0.12);
+    --ok: #34d399;       --ok-soft: rgba(52,211,153,0.12);
+    --warn: #fbbf24;     --warn-soft: rgba(251,191,36,0.12);
+    --err: #f87171;      --err-soft: rgba(248,113,113,0.12);
+    --shadow: 0 12px 48px rgba(0,0,0,0.6), 0 1px 2px rgba(0,0,0,0.4);
+    --grad: linear-gradient(120deg, #a78bfa, #22d3ee);
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); color: var(--ink); background: var(--bg0); min-height: 100vh; overflow-x: hidden; transition: background 400ms, color 300ms; }
+
+  /* ── Animated blobs ── */
+  .atmos { pointer-events:none; position:fixed; inset:0; z-index:0; overflow:hidden; }
+  .blob { position:absolute; border-radius:50%; filter:blur(80px); will-change:transform; }
+  .b1 { width:70vw;height:60vh; background:radial-gradient(circle,rgba(124,58,237,0.5),transparent 70%); top:-20%;left:-15%; animation:d1 18s ease-in-out infinite alternate; opacity:.55; }
+  .b2 { width:55vw;height:50vh; background:radial-gradient(circle,rgba(34,211,238,0.4),transparent 70%); top:5%;right:-10%; animation:d2 22s ease-in-out infinite alternate; opacity:.45; }
+  .b3 { width:40vw;height:40vh; background:radial-gradient(circle,rgba(245,213,71,0.25),transparent 70%); bottom:-10%;left:35%; animation:d3 16s ease-in-out infinite alternate; opacity:.4; }
+  .b4 { width:35vw;height:35vh; background:radial-gradient(circle,rgba(167,139,250,0.3),transparent 70%); bottom:20%;right:5%; animation:d4 25s ease-in-out infinite alternate; opacity:.4; }
+  [data-theme='light'] .b1{opacity:.25} [data-theme='light'] .b2{opacity:.18} [data-theme='light'] .b3{opacity:.15} [data-theme='light'] .b4{opacity:.15}
+  @keyframes d1{from{transform:translate(0,0) scale(1)}to{transform:translate(6vw,8vh) scale(1.12)}}
+  @keyframes d2{from{transform:translate(0,0) scale(1.05)}to{transform:translate(-5vw,6vh) scale(0.92)}}
+  @keyframes d3{from{transform:translate(0,0) scale(0.95)}to{transform:translate(4vw,-6vh) scale(1.08)}}
+  @keyframes d4{from{transform:translate(0,0) scale(1)}to{transform:translate(-3vw,-5vh) scale(1.1)}}
+
+  /* ── Shimmer animation ── */
+  @keyframes shimmer { from{background-position:-400px 0} to{background-position:400px 0} }
+  @keyframes pulse-ring { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.6;transform:scale(1.5)} }
+  @keyframes progress-glow { 0%,100%{opacity:0.8} 50%{opacity:1} }
+
+  /* ── Glass surface ── */
+  .glass {
+    background: var(--glass);
+    backdrop-filter: blur(20px) saturate(1.5);
+    -webkit-backdrop-filter: blur(20px) saturate(1.5);
+    border: 1px solid var(--rim);
+    box-shadow: var(--shadow), inset 0 1px 0 rgba(255,255,255,0.16);
+    border-radius: var(--radius);
+  }
+  [data-theme='dark'] .glass { box-shadow: var(--shadow), inset 0 1px 0 rgba(255,255,255,0.06); }
+
+  /* ── Page ── */
+  .page { position:relative;z-index:1;max-width:860px;margin:0 auto;padding:40px 24px 100px;display:flex;flex-direction:column;gap:36px; }
+
+  /* ── Typography ── */
+  .eyebrow { font-family:var(--display);font-size:0.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted); }
+  .display-title { font-family:var(--display);font-size:2.2rem;font-weight:800;letter-spacing:-0.04em;line-height:1.1;background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text; }
+  .grad-text { background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text; }
+  .section-label { font-family:var(--display);font-size:0.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:12px; }
+  .card-title { font-family:var(--display);font-size:0.92rem;font-weight:700; }
+
+  /* ── Header ── */
+  .hdr { display:flex;justify-content:space-between;align-items:flex-start;gap:16px; }
+  .theme-btn { font-family:var(--font);padding:9px 18px;border:1px solid var(--rim);border-radius:999px;background:var(--glass);backdrop-filter:blur(12px);color:var(--ink-soft);font-size:0.82rem;font-weight:600;cursor:pointer;box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,0.12);transition:border-color .2s,box-shadow .2s,transform .2s var(--spring);flex-shrink:0; }
+  .theme-btn:hover { border-color:var(--accent);box-shadow:var(--shadow),0 0 20px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,0.12);transform:translateY(-1px); }
+
+  /* ── Divider ── */
+  .div { height:1px;background:linear-gradient(90deg,transparent,var(--rim) 30%,var(--rim) 70%,transparent); }
+
+  /* ── Inputs ── */
+  .input-row { display:flex;gap:10px;flex-wrap:wrap; }
+  .g-input,.g-select { flex:1;min-width:160px;padding:10px 13px;border:1px solid var(--rim);border-radius:var(--radius-sm);background:var(--glass);backdrop-filter:blur(12px);color:var(--ink);font-size:0.88rem;outline:none;font-family:var(--font);box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,0.12);transition:border-color .18s,box-shadow .18s,transform .18s var(--spring); }
+  .g-input:focus,.g-select:focus { border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft),var(--shadow);transform:translateY(-1px); }
+
+  /* ── Tabs ── */
+  .pill-strip { display:inline-flex;gap:3px;padding:4px;border:1px solid var(--rim);border-radius:999px;background:var(--glass);backdrop-filter:blur(16px);box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,0.1); }
+  .pill-tab { font-family:var(--font);padding:7px 18px;border-radius:999px;border:0;background:transparent;color:var(--muted);font-size:0.82rem;font-weight:600;cursor:pointer;transition:background .15s,color .15s,box-shadow .15s; }
+  .pill-tab.active { background:var(--accent-soft);color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 0 14px var(--accent-soft); }
+  .detail-tabs { display:flex;gap:6px;flex-wrap:wrap; }
+  .d-tab { font-family:var(--font);padding:8px 16px;border:1px solid var(--rim);border-radius:999px;background:var(--glass);backdrop-filter:blur(12px);color:var(--ink-soft);font-size:0.84rem;font-weight:600;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,0.1);transition:border-color .18s,color .18s,box-shadow .18s,transform .18s var(--spring); }
+  .d-tab:hover { transform:translateY(-1px);border-color:var(--accent); }
+  .d-tab.active { border-color:var(--accent);background:var(--accent-soft);color:var(--accent);box-shadow:0 0 18px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,0.1); }
+
+  /* ── Phase blocks with progress bar ── */
+  .phase-row { display:flex;gap:8px; }
+  .phase-block { flex:1;padding:12px 14px;border-radius:var(--radius-sm);background:var(--glass);backdrop-filter:blur(14px);border:1.5px solid var(--rim);box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,0.08);transition:transform .2s var(--spring),box-shadow .2s;cursor:pointer;overflow:hidden;position:relative; }
+  .phase-block:hover { transform:translateY(-2px);box-shadow:var(--shadow),0 0 24px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,0.1); }
+  .phase-block.active { border-color:var(--accent);box-shadow:var(--shadow),0 0 28px var(--accent-soft),inset 0 1px 0 rgba(255,255,255,0.1); }
+  .phase-block.done { border-color:var(--ok);box-shadow:var(--shadow),0 0 18px var(--ok-soft),inset 0 1px 0 rgba(255,255,255,0.08); }
+  /* progress bar at bottom of block */
+  .phase-prog { position:absolute;bottom:0;left:0;height:3px;border-radius:0 3px 3px 0;transition:width .6s var(--spring); }
+  .phase-prog-track { position:absolute;bottom:0;left:0;right:0;height:3px;background:var(--rim); }
+  .phase-block.active .phase-prog { background:linear-gradient(90deg,#0891b2,#22d3ee);box-shadow:0 0 8px var(--accent);animation:progress-glow 2s ease-in-out infinite; }
+  .phase-block.done .phase-prog { background:linear-gradient(90deg,var(--ok),#6ee7b7); }
+  .phase-lbl { font-family:var(--display);font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px; }
+  .phase-block.active .phase-lbl { color:var(--accent); }
+  .phase-block.done .phase-lbl { color:var(--ok); }
+  .phase-nm { font-family:var(--display);font-size:0.76rem;font-weight:600;color:var(--ink-soft);margin-bottom:10px; }
+  .phase-block.active .phase-nm { color:var(--ink); }
+  .phase-pct { font-family:var(--display);font-size:0.7rem;font-weight:700;color:var(--muted);margin-bottom:4px; }
+  .phase-block.active .phase-pct { color:var(--accent); }
+  .phase-block.done .phase-pct { color:var(--ok); }
+
+  /* ── Job rows with status stripe + pulse dot ── */
+  .jobs-list { display:flex;flex-direction:column;gap:8px; }
+  .job-row {
+    display:flex;align-items:center;gap:12px;padding:12px 14px;
+    background:var(--glass);backdrop-filter:blur(12px);
+    border:1px solid var(--rim);border-radius:var(--radius-sm);
+    box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,0.08);
+    transition:border-color .18s,box-shadow .2s,transform .2s var(--spring);
+    cursor:pointer;position:relative;overflow:hidden;
+  }
+  /* left accent stripe */
+  .job-row::before { content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:3px 0 0 3px; }
+  .job-row.status-warn::before { background:var(--warn); }
+  .job-row.status-ok::before { background:var(--ok); }
+  .job-row.status-active::before { background:var(--accent); }
+  /* reactive hover glow by status */
+  .job-row.status-warn:hover { border-color:var(--warn);box-shadow:var(--shadow),0 0 20px var(--warn-soft);transform:translateY(-2px); }
+  .job-row.status-ok:hover   { border-color:var(--ok);box-shadow:var(--shadow),0 0 20px var(--ok-soft);transform:translateY(-2px); }
+  .job-row.status-active:hover { border-color:var(--accent);box-shadow:var(--shadow),0 0 20px var(--accent-soft);transform:translateY(-2px); }
+
+  /* pulse dot */
+  .pulse-wrap { position:relative;width:10px;height:10px;flex-shrink:0; }
+  .pulse-dot { width:10px;height:10px;border-radius:50%;position:absolute;inset:0; }
+  .pulse-ring { width:10px;height:10px;border-radius:50%;position:absolute;inset:0;opacity:0; }
+  .is-pulsing .pulse-ring { animation:pulse-ring 2s ease-in-out infinite; }
+  .dot-warn { background:var(--warn); } .ring-warn { background:var(--warn); }
+  .dot-ok   { background:var(--ok); }   .ring-ok   { background:var(--ok); }
+  .dot-active { background:var(--accent); } .ring-active { background:var(--accent); }
+
+  .job-name { font-family:var(--display);font-size:0.88rem;font-weight:600;color:var(--ink);flex:1;margin-left:4px; }
+  .job-tag { font-size:0.72rem;font-weight:700;padding:3px 9px;border-radius:6px;white-space:nowrap; }
+  .tag-warn { background:var(--warn-soft);color:var(--warn); }
+  .tag-active { background:var(--accent-soft);color:var(--accent); }
+  .tag-ok { background:var(--ok-soft);color:var(--ok); }
+  .job-meta { font-size:0.75rem;color:var(--muted); }
+  .job-chev { color:var(--muted);font-size:1rem;opacity:0.4; }
+
+  /* ── Field group ── */
+  .field-group { display:flex;flex-direction:column;gap:14px;padding:18px; }
+  .field-lbl { font-size:0.69rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);display:flex;flex-direction:column;gap:6px; }
+
+  /* ── Feature rows with stripe ── */
+  .feat-row {
+    display:flex;align-items:center;gap:10px;padding:11px 14px;
+    border-radius:var(--radius-sm);border:1px solid var(--rim);
+    background:var(--glass);backdrop-filter:blur(10px);
+    box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,0.07);
+    transition:border-color .15s,box-shadow .2s,transform .2s var(--spring);
+    cursor:pointer;position:relative;overflow:hidden;
+  }
+  .feat-row+.feat-row { margin-top:6px; }
+  .feat-row::before { content:'';position:absolute;left:0;top:0;bottom:0;width:3px; }
+  .feat-ok::before { background:var(--ok); }
+  .feat-warn::before { background:var(--warn); }
+  .feat-err::before { background:var(--err); }
+  .feat-ok:hover   { border-color:var(--ok);box-shadow:var(--shadow),0 0 16px var(--ok-soft);transform:translateY(-1px); }
+  .feat-warn:hover { border-color:var(--warn);box-shadow:var(--shadow),0 0 16px var(--warn-soft);transform:translateY(-1px); }
+  .feat-err:hover  { border-color:var(--err);box-shadow:var(--shadow),0 0 16px var(--err-soft);transform:translateY(-1px); }
+  .feat-name { font-family:var(--display);flex:1;font-size:0.88rem;font-weight:500;color:var(--ink);margin-left:4px; }
+  .feat-badge { padding:3px 9px;border-radius:6px;font-size:0.7rem;font-weight:700; }
+  .b-ok   { background:var(--ok-soft);color:var(--ok); }
+  .b-warn { background:var(--warn-soft);color:var(--warn); }
+  .b-err  { background:var(--err-soft);color:var(--err); }
+
+  /* ── Skeleton shimmer ── */
+  .skeleton { border-radius:6px;background:linear-gradient(90deg,var(--rim) 25%,color-mix(in srgb,var(--rim) 40%,transparent) 50%,var(--rim) 75%);background-size:400px 100%;animation:shimmer 1.4s ease-in-out infinite; }
+
+  /* ── Buttons ── */
+  .btn-row { display:flex;gap:10px;flex-wrap:wrap;align-items:center; }
+  .btn { font-family:var(--font);padding:10px 22px;border-radius:var(--radius-sm);font-size:0.88rem;font-weight:700;cursor:pointer;border:1px solid transparent;transition:filter .18s,box-shadow .2s,transform .2s var(--spring); }
+  .btn:hover:not(:disabled) { transform:translateY(-2px); }
+  .btn-primary { background:linear-gradient(105deg,#0e7490,#0891b2,#22d3ee);color:#fff;box-shadow:0 0 0 1px rgba(255,255,255,0.15) inset,0 8px 28px rgba(34,211,238,0.38); }
+  .btn-primary:hover { box-shadow:0 0 0 1px rgba(255,255,255,0.2) inset,0 12px 40px rgba(34,211,238,0.55);filter:brightness(1.08); }
+  .btn-sec { background:var(--glass);backdrop-filter:blur(10px);color:var(--ink-soft);border-color:var(--rim);box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,0.1); }
+  .btn-sec:hover { border-color:var(--accent);box-shadow:var(--shadow),0 0 20px var(--accent-soft);color:var(--ink); }
+
+  /* ── Skeleton row ── */
+  .skel-row { display:flex;gap:12px;align-items:center;padding:13px 14px;background:var(--glass);backdrop-filter:blur(10px);border:1px solid var(--rim);border-radius:var(--radius-sm); }
+</style>
+</head>
+<body>
+<div class="atmos">
+  <div class="blob b1"></div><div class="blob b2"></div>
+  <div class="blob b3"></div><div class="blob b4"></div>
+</div>
+<div class="page">
+
+  <!-- Header -->
+  <div class="hdr">
+    <div>
+      <div class="eyebrow" style="margin-bottom:6px">VoIP Ops Console</div>
+      <div class="display-title">Glass Preview v3</div>
+      <div style="font-size:.85rem;color:var(--muted);margin-top:6px">Status glows · Outfit font · Pulse dots · Progress bars · Accent stripes</div>
+    </div>
+    <button class="theme-btn" onclick="document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark'">☀︎ / ☾</button>
+  </div>
+
+  <!-- Inputs -->
+  <div>
+    <div class="section-label">Inputs</div>
+    <div class="input-row">
+      <input class="g-input" placeholder="Customer name…">
+      <input class="g-input" placeholder="Extension…">
+      <select class="g-select"><option>Migration</option><option>Install</option></select>
+    </div>
+  </div>
+  <div class="div"></div>
+
+  <!-- Tabs -->
+  <div>
+    <div class="section-label">Tab Strips</div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div><div class="pill-strip">
+        <button class="pill-tab active">Network</button>
+        <button class="pill-tab">Ports</button>
+        <button class="pill-tab">Router</button>
+      </div></div>
+      <div class="detail-tabs">
+        <button class="d-tab active">Overview</button>
+        <button class="d-tab">Call Flow</button>
+        <button class="d-tab">Migration</button>
+        <button class="d-tab">Portal</button>
+      </div>
+    </div>
+  </div>
+  <div class="div"></div>
+
+  <!-- Phase blocks + progress bars -->
+  <div>
+    <div class="section-label">Phase Progress</div>
+    <div class="phase-row">
+      <div class="phase-block done">
+        <div class="phase-lbl">Phase 1</div>
+        <div class="phase-nm">Pre-Migration</div>
+        <div class="phase-pct">100%</div>
+        <div class="phase-prog-track"><div class="phase-prog" style="width:100%"></div></div>
+      </div>
+      <div class="phase-block active">
+        <div class="phase-lbl">Phase 2</div>
+        <div class="phase-nm">Configuration</div>
+        <div class="phase-pct">40%</div>
+        <div class="phase-prog-track"><div class="phase-prog" style="width:40%"></div></div>
+      </div>
+      <div class="phase-block">
+        <div class="phase-lbl">Phase 3</div>
+        <div class="phase-nm">Cutover</div>
+        <div class="phase-pct">0%</div>
+        <div class="phase-prog-track"><div class="phase-prog" style="width:0%"></div></div>
+      </div>
+      <div class="phase-block">
+        <div class="phase-lbl">Phase 4</div>
+        <div class="phase-nm">Post-Cutover</div>
+        <div class="phase-pct">0%</div>
+        <div class="phase-prog-track"><div class="phase-prog" style="width:0%"></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="div"></div>
+
+  <!-- Job rows — status stripe + pulse + reactive glow -->
+  <div>
+    <div class="section-label">Job Rows — Status Reactive</div>
+    <div class="jobs-list">
+      <div class="job-row status-warn">
+        <div class="pulse-wrap is-pulsing"><div class="pulse-dot dot-warn"></div><div class="pulse-ring ring-warn"></div></div>
+        <div class="job-name">Acme Corp — Migration</div>
+        <span class="job-tag tag-warn">Cutover Aug 15</span>
+        <div class="job-chev">›</div>
+      </div>
+      <div class="job-row status-active">
+        <div class="pulse-wrap is-pulsing"><div class="pulse-dot dot-active"></div><div class="pulse-ring ring-active"></div></div>
+        <div class="job-name">Rivera Medical — Install</div>
+        <span class="job-tag tag-active">In progress</span>
+        <div class="job-chev">›</div>
+      </div>
+      <div class="job-row status-ok">
+        <div class="pulse-wrap"><div class="pulse-dot dot-ok"></div></div>
+        <div class="job-name">Sunridge Law — Migration</div>
+        <span class="job-tag tag-ok">Complete</span>
+        <div class="job-chev">›</div>
+      </div>
+    </div>
+  </div>
+  <div class="div"></div>
+
+  <!-- Field group -->
+  <div>
+    <div class="section-label">Field Group</div>
+    <div class="glass field-group">
+      <label class="field-lbl">Project Owner<input class="g-input" placeholder="e.g. Ryan A." style="width:100%"></label>
+      <label class="field-lbl">Cutover Date<input class="g-input" type="date" style="width:100%"></label>
+      <label class="field-lbl">Notes<input class="g-input" placeholder="Any special considerations…" style="width:100%"></label>
+    </div>
+  </div>
+  <div class="div"></div>
+
+  <!-- Feature rows with accent stripes -->
+  <div>
+    <div class="section-label">Feature Inventory — Status Stripes</div>
+    <div class="feat-row feat-ok"><div class="feat-name">Hunt Groups</div><span class="feat-badge b-ok">Supported ✓</span></div>
+    <div class="feat-row feat-warn"><div class="feat-name">Call Recording</div><span class="feat-badge b-warn">Different</span></div>
+    <div class="feat-row feat-err"><div class="feat-name">Fax / T.38</div><span class="feat-badge b-err">GAP</span></div>
+  </div>
+  <div class="div"></div>
+
+  <!-- Skeleton loading -->
+  <div>
+    <div class="section-label">Skeleton Loading State</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="skel-row"><div class="skeleton" style="width:10px;height:10px;border-radius:50%"></div><div class="skeleton" style="flex:1;height:14px"></div><div class="skeleton" style="width:80px;height:20px;border-radius:6px"></div></div>
+      <div class="skel-row"><div class="skeleton" style="width:10px;height:10px;border-radius:50%"></div><div class="skeleton" style="flex:1;height:14px"></div><div class="skeleton" style="width:80px;height:20px;border-radius:6px"></div></div>
+    </div>
+  </div>
+  <div class="div"></div>
+
+  <!-- Buttons -->
+  <div>
+    <div class="section-label">Buttons</div>
+    <div class="btn-row">
+      <button class="btn btn-primary">Save &amp; Continue →</button>
+      <button class="btn btn-sec">Cancel</button>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
